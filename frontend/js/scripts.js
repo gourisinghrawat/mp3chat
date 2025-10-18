@@ -69,8 +69,12 @@ function updateURLWithMeetingId(meetingId) {
 // Initialize socket connection
 function initializeSocket() {
     userName = "user-" + Math.floor(Math.random() * 100000);
-    socket = io.connect('https://172.22.240.1:8181/', {
-    // socket = io.connect('https://localhost:8181/', {
+    
+    // Automatically detect the socket URL (works on Render and locally)
+    const socketUrl = window.location.origin;
+    console.log('[SOCKET] Connecting to:', socketUrl);
+    
+    socket = io.connect(socketUrl, {
         auth: {
             userName,
             password,
