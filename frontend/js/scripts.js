@@ -107,6 +107,7 @@ document.querySelector('#create-meeting').addEventListener('click', async () => 
 // Join an existing meeting
 document.querySelector('#join-meeting').addEventListener('click', async () => {
     displayName = document.querySelector('#display-name').value.trim();
+    const userEmail = document.querySelector('#user-email').value.trim();
     currentMeetingId = document.querySelector('#meeting-id-input').value.trim().toUpperCase();
     
     if (!displayName) {
@@ -114,9 +115,83 @@ document.querySelector('#join-meeting').addEventListener('click', async () => {
         return;
     }
     
+    if (!userEmail) {
+        alert('Please enter your email address');
+        return;
+    }
+    
     if (!currentMeetingId) {
         alert('Please enter a meeting ID');
         return;
+    }
+    
+    // Check if this is a scheduled meeting and if user is the host
+    try {
+        const response = await fetch(`/api/meetings/${currentMeetingId}`);
+        const data = await response.json();
+        
+        if (data.success && data.meeting) {
+            const meeting = data.meeting;
+            
+            // Check if user is the host
+            if (meeting.hostEmail.toLowerCase() === userEmail.toLowerCase()) {
+                // User is the host - check meeting status
+                if (meeting.status === 'scheduled') {
+                    // Meeting not started yet - prompt to start
+                    if (confirm(`You are the host of this meeting: "${meeting.title}"\n\nWould you like to start the meeting now?`)) {
+                        // Start the meeting
+                        const startResponse = await fetch(`/api/meetings/${currentMeetingId}/start`, {
+                            method: 'PATCH'
+                        });
+                        const startData = await startResponse.json();
+                        
+                        if (!startData.success) {
+                            alert('Failed to start meeting. Please try again.');
+                            return;
+                        }
+                        
+                        // Continue to join as host
+                        isAdmin = true;
+                    } else {
+                        return; // Host declined to start
+                    }
+                } else if (meeting.status === 'completed') {
+                    alert('This meeting has already ended.');
+                    return;
+                } else if (meeting.status === 'cancelled') {
+                    alert('This meeting has been cancelled.');
+                    return;
+                }
+                // If status is 'ongoing', host can join normally
+                isAdmin = true;
+            } else {
+                // User is not the host - check if they're a participant
+                const isParticipant = meeting.participants?.some(p => 
+                    p.email.toLowerCase() === userEmail.toLowerCase()
+                );
+                
+                if (meeting.status === 'scheduled') {
+                    alert('This meeting has not started yet. Please wait for the host to start the meeting.');
+                    return;
+                } else if (meeting.status === 'completed') {
+                    alert('This meeting has already ended.');
+                    return;
+                } else if (meeting.status === 'cancelled') {
+                    alert('This meeting has been cancelled.');
+                    return;
+                }
+                
+                if (!isParticipant && meeting.participants && meeting.participants.length > 0) {
+                    const confirmJoin = confirm('You are not listed as a participant for this meeting. Do you still want to join?');
+                    if (!confirmJoin) {
+                        return;
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        console.log('Meeting not found in database, treating as instant meeting');
+        // If meeting not found, it's an instant meeting - proceed normally
     }
     
     // Update URL with meeting ID
@@ -126,7 +201,7 @@ document.querySelector('#join-meeting').addEventListener('click', async () => {
     
     // Wait for socket to connect
     socket.on('connect', () => {
-        socket.emit('joinMeeting', { meetingId: currentMeetingId, displayName });
+        socket.emit('joinMeeting', { meetingId: currentMeetingId, displayName, email: userEmail });
     });
 });
 
@@ -137,6 +212,11 @@ async function showCallScreen() {
     document.querySelector('#call-screen').style.display = 'flex';
     document.querySelector('#user-name-display').innerHTML = displayName;
     document.querySelector('#current-meeting-id').innerHTML = currentMeetingId;
+    
+    // Show settings button for admin and co-hosts
+    if (isAdmin || isCoHost) {
+        document.querySelector('#settings-btn').style.display = 'flex';
+    }
     
     // Show role badge and waiting room tab
     if (isAdmin) {
@@ -1426,8 +1506,32 @@ function updateWaitingRoomList(waitingRoom) {
 
 // Initialize page - check if meeting ID is in URL
 window.addEventListener('DOMContentLoaded', () => {
-    if (urlMeetingId) {
-        // Pre-fill the meeting ID input
+    // Check for auto-join from scheduled meetings (this runs first)
+    const autoJoinMeetingId = sessionStorage.getItem('autoJoinMeeting');
+    const isHostFlag = sessionStorage.getItem('isHost');
+    
+    if (autoJoinMeetingId) {
+        // Pre-fill the meeting ID
+        document.querySelector('#meeting-id-input').value = autoJoinMeetingId;
+        
+        // If user was marked as host, set admin flag
+        if (isHostFlag === 'true') {
+            isAdmin = true;
+        }
+        
+        // Clear session storage
+        sessionStorage.removeItem('autoJoinMeeting');
+        sessionStorage.removeItem('isHost');
+        
+        // Focus on email input
+        document.querySelector('#user-email').focus();
+        
+        // Show a message
+        setTimeout(() => {
+            alert('Please enter your name and email address to join the meeting.');
+        }, 300);
+    } else if (urlMeetingId) {
+        // Pre-fill the meeting ID input from URL
         document.querySelector('#meeting-id-input').value = urlMeetingId;
         
         // Focus on display name input
@@ -1452,5 +1556,76 @@ window.addEventListener('popstate', (event) => {
             // They were in a meeting and navigated back
             location.reload();
         }
+    }
+});
+
+// Settings Modal
+let currentMeetingSettings = {
+    waitingRoomEnabled: true,
+    defaultPermissions: {
+        canUnmute: true,
+        canVideo: true,
+        canScreenShare: false
+    }
+};
+
+// Open settings modal
+document.querySelector('#settings-btn').addEventListener('click', () => {
+    const modal = document.querySelector('#settings-modal');
+    modal.style.display = 'block';
+    
+    // Load current settings from server or use defaults
+    socket.emit('getSettings', { meetingId: currentMeetingId });
+});
+
+// Close settings modal
+document.querySelector('#close-settings').addEventListener('click', () => {
+    document.querySelector('#settings-modal').style.display = 'none';
+});
+
+// Close on overlay click
+document.querySelector('.settings-overlay').addEventListener('click', () => {
+    document.querySelector('#settings-modal').style.display = 'none';
+});
+
+// Waiting room toggle
+document.querySelector('#waiting-room-toggle').addEventListener('change', (e) => {
+    const enabled = e.target.checked;
+    socket.emit('toggleWaitingRoom', { meetingId: currentMeetingId, enabled });
+    currentMeetingSettings.waitingRoomEnabled = enabled;
+});
+
+// Default permission toggles
+document.querySelector('#default-audio-permission').addEventListener('change', (e) => {
+    currentMeetingSettings.defaultPermissions.canUnmute = e.target.checked;
+    socket.emit('updateDefaultPermissions', { 
+        meetingId: currentMeetingId, 
+        permissions: currentMeetingSettings.defaultPermissions 
+    });
+});
+
+document.querySelector('#default-video-permission').addEventListener('change', (e) => {
+    currentMeetingSettings.defaultPermissions.canVideo = e.target.checked;
+    socket.emit('updateDefaultPermissions', { 
+        meetingId: currentMeetingId, 
+        permissions: currentMeetingSettings.defaultPermissions 
+    });
+});
+
+document.querySelector('#default-screenshare-permission').addEventListener('change', (e) => {
+    currentMeetingSettings.defaultPermissions.canScreenShare = e.target.checked;
+    socket.emit('updateDefaultPermissions', { 
+        meetingId: currentMeetingId, 
+        permissions: currentMeetingSettings.defaultPermissions 
+    });
+});
+
+// Apply permissions to all current participants
+document.querySelector('#apply-permissions-all').addEventListener('click', () => {
+    if (confirm('Apply these permissions to all current participants (except co-hosts)? This will override their current permissions.')) {
+        socket.emit('applyPermissionsToAll', {
+            meetingId: currentMeetingId,
+            permissions: currentMeetingSettings.defaultPermissions
+        });
     }
 });

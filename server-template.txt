@@ -1,0 +1,47 @@
+require('dotenv').config();
+
+const fs = require('fs');
+const https = require('https');
+const express = require('express');
+const path = require('path');
+const socketio = require('socket.io');
+
+const app = express();
+const connectDB = require('./database/config/database');
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'frontend')));
+
+connectDB();
+
+const meetingRoutes = require('./backend/routes/meetingRoutes');
+app.use('/api/meetings', meetingRoutes);
+
+app.get('/:meetingId([A-Z0-9]{8})', (req, res) => {
+    res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
+});
+
+const key = fs.readFileSync('cert.key');
+const cert = fs.readFileSync('cert.crt');
+
+const expressServer = https.createServer({ key, cert }, app);
+
+const io = socketio(expressServer, {
+    cors: {
+        origin: [
+            "https://localhost",
+            "https://172.22.240.1"
+        ],
+        methods: ["GET", "POST"]
+    }
+});
+
+const handleSocketEvents = require('./backend/socket/socketEvents');
+handleSocketEvents(io);
+
+const PORT = process.env.PORT || 8181;
+expressServer.listen(PORT, () => {
+    console.log(`\n server running on https://localhost:${PORT}`);
+    console.log(` Frontend served from: ./frontend`);
+    console.log(` Socket.IO ready for connections\n`);
+});

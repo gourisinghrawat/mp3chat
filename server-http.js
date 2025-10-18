@@ -1,8 +1,7 @@
 require('dotenv').config();
 
-const fs = require('fs');
-const https = require('https');
 const express = require('express');
+const http = require('http');
 const path = require('path');
 const socketio = require('socket.io');
 
@@ -21,18 +20,20 @@ app.get('/:meetingId([A-Z0-9]{8})', (req, res) => {
     res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
 });
 
-const key = fs.readFileSync('cert.key');
-const cert = fs.readFileSync('cert.crt');
-
-const expressServer = https.createServer({ key, cert }, app);
+// Create HTTP server (for cloud deployment without SSL)
+const expressServer = http.createServer(app);
 
 // Configure CORS origins based on environment
 const getAllowedOrigins = () => {
     const origins = [];
     
-    // Production/Vercel domain
+    // Production/Cloud platform domain
     if (process.env.VERCEL_URL) {
         origins.push(`https://${process.env.VERCEL_URL}`);
+    }
+    
+    if (process.env.RENDER_EXTERNAL_URL) {
+        origins.push(process.env.RENDER_EXTERNAL_URL);
     }
     
     // Custom domain if provided
@@ -48,6 +49,7 @@ const getAllowedOrigins = () => {
         origins.push('http://localhost:3000');
     }
     
+    console.log('[CORS] Allowed origins:', origins);
     return origins.length > 0 ? origins : '*';
 };
 
@@ -58,6 +60,7 @@ const io = socketio(expressServer, {
         credentials: true
     }
 });
+
 const handleSocketEvents = require('./backend/socket/socketEvents');
 handleSocketEvents(io);
 
@@ -72,7 +75,16 @@ if (process.env.ENABLE_EMAILS === 'true') {
 
 const PORT = process.env.PORT || 8181;
 expressServer.listen(PORT, () => {
-    console.log(`\n[SERVER] Running on https://localhost:${PORT}`);
+    console.log(`\n[SERVER] Running on http://localhost:${PORT}`);
     console.log(`[FRONTEND] Served from: ./frontend`);
-    console.log(`[SOCKET.IO] Ready for connections\n`);
+    console.log(`[SOCKET.IO] Ready for connections`);
+    console.log(`[ENV] Node Environment: ${process.env.NODE_ENV || 'development'}\n`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM signal received: closing HTTP server');
+    expressServer.close(() => {
+        console.log('HTTP server closed');
+    });
 });

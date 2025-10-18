@@ -349,3 +349,19 @@ function updateParticipantMediaState(remoteUserName, isVideoEnabled, isAudioEnab
         videoIcon.className = isVideoEnabled ? 'video-icon bi bi-camera-video-fill' : 'video-icon bi bi-camera-video-off-fill muted';
     }
 }
+
+// Settings event listeners
+socket.on('settingsUpdate', (settings) => {
+    currentMeetingSettings = settings;
+    
+    // Update UI toggles
+    document.querySelector('#waiting-room-toggle').checked = settings.waitingRoomEnabled;
+    document.querySelector('#default-audio-permission').checked = settings.defaultPermissions.canUnmute;
+    document.querySelector('#default-video-permission').checked = settings.defaultPermissions.canVideo;
+    document.querySelector('#default-screenshare-permission').checked = settings.defaultPermissions.canScreenShare;
+});
+
+socket.on('permissionsAppliedToAll', () => {
+    alert('Permissions have been applied to all participants');
+    document.querySelector('#settings-modal').style.display = 'none';
+});

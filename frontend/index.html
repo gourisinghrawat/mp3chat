@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <meta http-equiv='X-UA-Compatible' content='IE=edge'>
+    <title>Video Call Meeting</title>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-9ndCyUaIbzAi2FUVXJi0CjmCapSmO7SnpJef0486qhLnuZ2cdeRhO02iuK6FUUVM" crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <link rel='stylesheet' type='text/css' media='screen' href='css/styles.css'>
+</head>
+<body>
+    <!-- Initial Setup Screen -->
+    <div class="container" id="setup-screen">
+        <div class="row justify-content-center mt-5">
+            <div class="col-md-6">
+                <div class="card">
+                    <div class="card-body">
+                        <h3 class="card-title text-center mb-4">Video Call Meeting</h3>
+                        <div class="mb-3">
+                            <label for="display-name" class="form-label">Display Name</label>
+                            <input type="text" class="form-control" id="display-name" placeholder="Enter your name" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="user-email" class="form-label">Email Address</label>
+                            <input type="email" class="form-control" id="user-email" placeholder="your.email@example.com" required>
+                            <small class="text-muted">Required to join scheduled meetings</small>
+                        </div>
+                        <div class="mb-3">
+                            <button id="create-meeting" class="btn btn-primary w-100">
+                                <i class="bi bi-camera-video"></i> Create Instant Meeting
+                            </button>
+                        </div>
+                        <hr>
+                        <div class="mb-3">
+                            <label for="meeting-id-input" class="form-label">Meeting ID</label>
+                            <input type="text" class="form-control" id="meeting-id-input" placeholder="Enter meeting ID to join">
+                        </div>
+                        <div class="mb-3">
+                            <button id="join-meeting" class="btn btn-success w-100">
+                                <i class="bi bi-box-arrow-in-right"></i> Join Meeting
+                            </button>
+                        </div>
+                        <hr>
+                        <div class="mb-3">
+                            <button id="schedule-meeting-btn" class="btn btn-info w-100">
+                                <i class="bi bi-calendar-plus"></i> Schedule Meeting
+                            </button>
+                        </div>
+                        <div class="mb-3">
+                            <button id="my-meetings-btn" class="btn btn-secondary w-100">
+                                <i class="bi bi-calendar-check"></i> My Meetings
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Waiting Room Screen -->
+    <div class="container" id="waiting-room-screen" style="display: none;">
+        <div class="row justify-content-center mt-5">
+            <div class="col-md-6">
+                <div class="card text-center">
+                    <div class="card-body">
+                        <div class="spinner-border text-primary mb-3" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                        <h4 class="card-title">In Waiting Room</h4>
+                        <p class="card-text">Please wait for the host to let you in...</p>
+                        <p class="text-muted">Meeting ID: <strong id="waiting-meeting-id"></strong></p>
+                        <button id="cancel-join" class="btn btn-danger mt-3">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Schedule Meeting Screen -->
+    <div class="container" id="schedule-meeting-screen" style="display: none;">
+        <div class="row justify-content-center mt-5">
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h4 class="mb-0"><i class="bi bi-calendar-plus"></i> Schedule New Meeting</h4>
+                        <button id="back-to-home-schedule" class="btn btn-sm btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Back
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <form id="schedule-meeting-form">
+                            <div class="mb-3">
+                                <label for="meeting-title" class="form-label">Meeting Title *</label>
+                                <input type="text" class="form-control" id="meeting-title" placeholder="e.g., Team Standup" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="meeting-description" class="form-label">Description</label>
+                                <textarea class="form-control" id="meeting-description" rows="3" placeholder="Optional meeting description"></textarea>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="host-name" class="form-label">Your Name *</label>
+                                    <input type="text" class="form-control" id="host-name" placeholder="John Doe" required>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="host-email" class="form-label">Your Email *</label>
+                                    <input type="email" class="form-control" id="host-email" placeholder="john@example.com" required>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label for="meeting-date" class="form-label">Date *</label>
+                                    <input type="date" class="form-control" id="meeting-date" required>
+                                </div>
+                                <div class="col-md-3 mb-3">
+                                    <label for="meeting-time" class="form-label">Time *</label>
+                                    <input type="time" class="form-control" id="meeting-time" required>
+                                </div>
+                                <div class="col-md-3 mb-3">
+                                    <label for="meeting-duration" class="form-label">Duration (min) *</label>
+                                    <input type="number" class="form-control" id="meeting-duration" value="60" min="15" step="15" required>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Meeting Settings</label>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="schedule-waiting-room" checked>
+                                    <label class="form-check-label" for="schedule-waiting-room">
+                                        Enable Waiting Room
+                                    </label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="schedule-allow-audio" checked>
+                                    <label class="form-check-label" for="schedule-allow-audio">
+                                        Allow Participant Audio
+                                    </label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="schedule-allow-video" checked>
+                                    <label class="form-check-label" for="schedule-allow-video">
+                                        Allow Participant Video
+                                    </label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="schedule-allow-screenshare">
+                                    <label class="form-check-label" for="schedule-allow-screenshare">
+                                        Allow Participant Screen Share
+                                    </label>
+                                </div>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="schedule-email-reminders" checked>
+                                    <label class="form-check-label" for="schedule-email-reminders">
+                                        📧 Send Email Reminders (15 min before)
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="participant-emails" class="form-label">
+                                    Participant Emails <small class="text-muted">(comma separated)</small>
+                                </label>
+                                <textarea class="form-control" id="participant-emails" rows="2" placeholder="user1@example.com, user2@example.com"></textarea>
+                            </div>
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle"></i> After scheduling, you and all participants will receive email invitations with calendar invites (.ics).
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">
+                                <i class="bi bi-calendar-check"></i> Schedule Meeting
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- My Meetings Screen -->
+    <div class="container" id="my-meetings-screen" style="display: none;">
+        <div class="row justify-content-center mt-5">
+            <div class="col-md-10">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h4 class="mb-0"><i class="bi bi-calendar-check"></i> My Scheduled Meetings</h4>
+                        <button id="back-to-home-meetings" class="btn btn-sm btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Back
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <label for="user-email-filter" class="form-label">Your Email</label>
+                            <div class="input-group">
+                                <input type="email" class="form-control" id="user-email-filter" placeholder="Enter your email">
+                                <button class="btn btn-primary" id="load-my-meetings">
+                                    <i class="bi bi-search"></i> Load Meetings
+                                </button>
+                            </div>
+                        </div>
+                        <div id="meetings-loading" style="display: none;" class="text-center py-4">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Loading your meetings...</p>
+                        </div>
+                        <div id="meetings-list">
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle"></i> Enter your email and click "Load Meetings" to view your scheduled meetings.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video Call Screen -->
+    <div id="call-screen" style="display: none;">
+        <!-- Top Header Bar -->
+        <div id="top-header">
+            <div class="header-left">
+                <span id="user-name-display"></span>
+                <span id="role-badge" class="badge bg-success ms-2" style="display: none;"></span>
+            </div>
+            <div class="header-center">
+                <span class="meeting-id-label">Meeting ID: <strong id="current-meeting-id"></strong></span>
+                <button id="copy-meeting-id" class="btn btn-sm btn-outline-light ms-2" title="Copy meeting link">
+                    <i class="bi bi-link-45deg"></i> Copy Link
+                </button>
+            </div>
+            <div class="header-right">
+                <button id="toggle-chat" class="btn btn-sm btn-outline-light">
+                    <i class="bi bi-chat-dots"></i> Chat
+                </button>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div id="main-content">
+            <!-- Video Grid Section -->
+            <div id="video-grid-section">
+                <div id="video-grid">
+                    <!-- Videos will be added here dynamically -->
+                </div>
+                
+
+            </div>
+
+            <!-- Sidebar (Chat/Transcript) -->
+            <div id="sidebar-panel" class="sidebar-hidden">
+                <div class="sidebar-header">
+                    <div class="nav nav-tabs" role="tablist">
+                        <button class="nav-link active" id="chat-tab" data-bs-toggle="tab" data-bs-target="#chat-content" type="button" role="tab">
+                            Chat
+                        </button>
+                        <button class="nav-link" id="participants-tab" data-bs-toggle="tab" data-bs-target="#participants-content" type="button" role="tab">
+                            People (<span id="participant-count">0</span>)
+                        </button>
+                        <button class="nav-link" id="waiting-room-tab" data-bs-toggle="tab" data-bs-target="#waiting-room-content" type="button" role="tab" style="display: none;">
+                            Waiting (<span id="waiting-count">0</span>)
+                        </button>
+                    </div>
+                    <button id="close-sidebar" class="btn-close"></button>
+                </div>
+                <div class="sidebar-body">
+                    <div class="tab-content">
+                        <!-- Chat Tab -->
+                        <div class="tab-pane fade show active" id="chat-content" role="tabpanel">
+                            <div id="chat-messages">
+                                <!-- Chat messages will appear here -->
+                            </div>
+                            <div class="chat-input-container">
+                                <input type="text" id="chat-input" class="form-control" placeholder="Type a message..." maxlength="500">
+                                <button id="send-message" class="btn btn-primary">
+                                    <i class="bi bi-send-fill"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <!-- Participants Tab -->
+                        <div class="tab-pane fade" id="participants-content" role="tabpanel">
+                            <div id="participants-list"></div>
+                        </div>
+                        <!-- Waiting Room Tab -->
+                        <div class="tab-pane fade" id="waiting-room-content" role="tabpanel">
+                            <div id="waiting-room-list-sidebar"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Bottom Control Bar -->
+        <div id="bottom-controls">
+            <div class="control-group">
+                <button id="toggle-audio" class="control-btn" title="Toggle Microphone">
+                    <i class="bi bi-mic-fill"></i>
+                    <span class="control-label">Mute</span>
+                </button>
+                <button id="toggle-video" class="control-btn" title="Toggle Camera">
+                    <i class="bi bi-camera-video-fill"></i>
+                    <span class="control-label">Stop video</span>
+                </button>
+                <button id="share-screen" class="control-btn" title="Share Screen">
+                    <i class="bi bi-display"></i>
+                    <span class="control-label">Share</span>
+                </button>
+                <button id="raise-hand" class="control-btn" title="Raise Hand">
+                    <i class="bi bi-hand-index-thumb"></i>
+                    <span class="control-label">Raise</span>
+                </button>
+                <button id="toggle-chat" class="control-btn" title="Chat">
+                    <span class="notification-badge" id="chat-badge" style="display: none;"></span>
+                    <i class="bi bi-chat-dots-fill"></i>
+                    <span class="control-label">Chat</span>
+                </button>
+                <button id="toggle-participants" class="control-btn" title="Participants">
+                    <i class="bi bi-people-fill"></i>
+                    <span class="control-label">People</span>
+                </button>
+                <button id="toggle-waiting-room" class="control-btn" title="Waiting Room" style="display: none;">
+                    <span class="notification-badge" id="waiting-room-badge">0</span>
+                    <i class="bi bi-hourglass-split"></i>
+                    <span class="control-label">Waiting</span>
+                </button>
+                <button id="settings-btn" class="control-btn" title="Settings" style="display: none;">
+                    <i class="bi bi-gear-fill"></i>
+                    <span class="control-label">Settings</span>
+                </button>
+                <button id="hangup" class="control-btn leave-btn" title="Leave Meeting">
+                    <i class="bi bi-telephone-x-fill"></i>
+                    <span class="control-label">Leave</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="settings-modal" style="display: none;">
+        <div class="settings-overlay"></div>
+        <div class="settings-panel">
+            <div class="settings-header">
+                <h5>Meeting Settings</h5>
+                <button id="close-settings" class="btn-close"></button>
+            </div>
+            <div class="settings-body">
+                <!-- Waiting Room Settings -->
+                <div class="settings-section">
+                    <h6 class="settings-section-title">
+                        <i class="bi bi-hourglass-split"></i> Waiting Room
+                    </h6>
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="waiting-room-toggle" checked>
+                        <label class="form-check-label" for="waiting-room-toggle">
+                            Enable waiting room for new participants
+                        </label>
+                    </div>
+                    <small class="text-muted">When enabled, new participants will wait for approval before joining</small>
+                </div>
+
+                <!-- Default Participant Permissions -->
+                <div class="settings-section">
+                    <h6 class="settings-section-title">
+                        <i class="bi bi-shield-check"></i> Default Participant Permissions
+                    </h6>
+                    <p class="text-muted small mb-3">Set default permissions for new participants joining the meeting</p>
+                    
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="default-audio-permission" checked>
+                        <label class="form-check-label" for="default-audio-permission">
+                            <i class="bi bi-mic-fill"></i> Allow participants to unmute their microphone
+                        </label>
+                    </div>
+                    
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="default-video-permission" checked>
+                        <label class="form-check-label" for="default-video-permission">
+                            <i class="bi bi-camera-video-fill"></i> Allow participants to turn on their camera
+                        </label>
+                    </div>
+                    
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="default-screenshare-permission">
+                        <label class="form-check-label" for="default-screenshare-permission">
+                            <i class="bi bi-display"></i> Allow participants to share their screen
+                        </label>
+                    </div>
+                    
+                    <small class="text-muted">These settings apply to new participants. You can change individual permissions from the People tab.</small>
+                </div>
+
+                <!-- Apply to Existing Participants -->
+                <div class="settings-section">
+                    <h6 class="settings-section-title">
+                        <i class="bi bi-people-fill"></i> Apply to All Current Participants
+                    </h6>
+                    <p class="text-muted small mb-3">Apply the above permissions to all current participants (except co-hosts)</p>
+                    
+                    <button id="apply-permissions-all" class="btn btn-warning btn-sm">
+                        <i class="bi bi-arrow-repeat"></i> Apply to All Participants
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="/socket.io/socket.io.js"></script>
+<script src='js/scheduleMeeting.js'></script>
+<script src='js/scripts.js'></script>
+<script src='js/socketListeners.js'></script>
+</html>
