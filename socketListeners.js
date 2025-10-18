@@ -1,7 +1,9 @@
 
 function setupSocketListeners() {
-    socket.on('meetingJoined', async ({ participants, meetingId }) => {
+    socket.on('meetingJoined', async ({ participants, meetingId, isAdmin: adminStatus, permissions }) => {
         console.log('Joined meeting:', meetingId);
+        isAdmin = adminStatus || false;
+        userPermissions = permissions;
         await showCallScreen();
         updateParticipantsList(participants);
         
@@ -10,6 +12,121 @@ function setupSocketListeners() {
         for (const participant of otherParticipants) {
             await call(participant.userName);
         }
+    });
+
+    socket.on('waitingRoomJoined', ({ meetingId }) => {
+        console.log('In waiting room for meeting:', meetingId);
+        showWaitingRoom();
+    });
+
+    socket.on('admittedToMeeting', async ({ participants, meetingId, isAdmin: adminStatus, permissions }) => {
+        console.log('Admitted to meeting:', meetingId);
+        isAdmin = adminStatus || false;
+        userPermissions = permissions;
+        await showCallScreen();
+        updateParticipantsList(participants);
+        
+        // Initiate calls to other participants
+        const otherParticipants = participants.filter(p => p.userName !== userName);
+        for (const participant of otherParticipants) {
+            await call(participant.userName);
+        }
+    });
+
+    socket.on('deniedEntry', ({ message }) => {
+        alert(message);
+        location.reload();
+    });
+
+    socket.on('waitingRoomUpdate', ({ waitingRoom }) => {
+        if (isAdmin || isCoHost) {
+            updateWaitingRoomList(waitingRoom);
+        }
+    });
+
+    socket.on('promotedToCoHost', ({ permissions }) => {
+        isCoHost = true;
+        userPermissions = permissions;
+        const badge = document.querySelector('#role-badge');
+        badge.textContent = 'Co-Host';
+        badge.className = 'badge bg-warning ms-2';
+        badge.style.display = 'inline';
+        // Show waiting room tab and button for co-host
+        document.querySelector('#waiting-room-tab').style.display = 'block';
+        document.querySelector('#toggle-waiting-room').style.display = 'flex';
+        displayChatMessage({
+            senderName: 'System',
+            message: 'You have been promoted to Co-Host',
+            timestamp: new Date().toISOString(),
+            isOwn: false
+        });
+    });
+
+    socket.on('promotedToAdmin', ({ permissions }) => {
+        isAdmin = true;
+        userPermissions = permissions;
+        const badge = document.querySelector('#role-badge');
+        badge.textContent = 'Admin';
+        badge.className = 'badge bg-danger ms-2';
+        badge.style.display = 'inline';
+        // Show waiting room tab and button for admin
+        document.querySelector('#waiting-room-tab').style.display = 'block';
+        document.querySelector('#toggle-waiting-room').style.display = 'flex';
+        displayChatMessage({
+            senderName: 'System',
+            message: 'You have been promoted to Admin',
+            timestamp: new Date().toISOString(),
+            isOwn: false
+        });
+    });
+
+    socket.on('permissionsUpdated', ({ permissions }) => {
+        userPermissions = permissions;
+        
+        // If audio permission disabled, mute the user
+        if (!permissions.canUnmute && isAudioEnabled && localStream) {
+            localStream.getAudioTracks().forEach(track => track.enabled = false);
+            isAudioEnabled = false;
+            const audioBtn = document.querySelector('#toggle-audio');
+            const audioBtnIcon = audioBtn.querySelector('i');
+            const audioBtnLabel = audioBtn.querySelector('.control-label');
+            audioBtnIcon.className = 'bi bi-mic-mute-fill';
+            audioBtnLabel.textContent = 'Unmute';
+            audioBtn.classList.add('muted');
+        }
+        
+        // If video permission disabled, turn off camera
+        if (!permissions.canVideo && isVideoEnabled && localStream) {
+            localStream.getVideoTracks().forEach(track => track.enabled = false);
+            isVideoEnabled = false;
+            const videoBtn = document.querySelector('#toggle-video');
+            const videoBtnIcon = videoBtn.querySelector('i');
+            const videoBtnLabel = videoBtn.querySelector('.control-label');
+            videoBtnIcon.className = 'bi bi-camera-video-off-fill';
+            videoBtnLabel.textContent = 'Start video';
+            videoBtn.classList.add('off');
+        }
+        
+        displayChatMessage({
+            senderName: 'System',
+            message: 'Your permissions have been updated',
+            timestamp: new Date().toISOString(),
+            isOwn: false
+        });
+    });
+
+    socket.on('removedFromMeeting', ({ message }) => {
+        alert(message);
+        // Disconnect and reload
+        if (socket) {
+            socket.disconnect();
+        }
+        // Clear local stream
+        if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+        }
+        // Reload the page to go back to setup
+        window.location.reload();
     });
 
     socket.on('meetingError', (error) => {
@@ -27,14 +144,31 @@ function setupSocketListeners() {
             peerConnections[leftUserName].close();
             delete peerConnections[leftUserName];
         }
-        const videoEl = document.querySelector(`#remote-video-${leftUserName}`);
-        if (videoEl && videoEl.parentElement) {
-            videoEl.parentElement.remove();
+        const videoTile = document.querySelector(`#video-tile-${leftUserName}`);
+        if (videoTile) {
+            videoTile.remove();
         }
     });
 
     socket.on('participantsUpdate', ({ participants }) => {
         updateParticipantsList(participants);
+        updateHandRaisedIndicators(participants);
+    });
+
+    socket.on('handLowered', () => {
+        // Admin lowered your hand
+        isHandRaised = false;
+        const raiseHandBtn = document.querySelector('#raise-hand');
+        const icon = raiseHandBtn.querySelector('i');
+        const label = raiseHandBtn.querySelector('.control-label');
+        
+        raiseHandBtn.classList.remove('active');
+        icon.classList.remove('bi-hand-index-thumb-fill');
+        icon.classList.add('bi-hand-index-thumb');
+        label.textContent = 'Raise';
+        
+        // Update local video tile indicator
+        updateLocalHandIndicator();
     });
 
     socket.on('newOffer', async (offerObj) => {
@@ -78,10 +212,10 @@ function setupSocketListeners() {
     socket.on('screenSharingStopped', ({ userName: sharerUserName, displayName: sharerDisplayName }) => {
         console.log(`${sharerDisplayName} stopped screen sharing`);
         
-        // Remove the shared screen video
-        const screenVideoEl = document.querySelector(`#screen-share-${sharerUserName}`);
-        if (screenVideoEl && screenVideoEl.parentElement) {
-            screenVideoEl.parentElement.remove();
+        // Remove the shared screen video tile
+        const screenTile = document.querySelector(`#video-tile-screen-${sharerUserName}`);
+        if (screenTile) {
+            screenTile.remove();
         }
         
         displayChatMessage({
@@ -90,6 +224,14 @@ function setupSocketListeners() {
             timestamp: new Date().toISOString(),
             isOwn: false
         });
+    });
+
+    socket.on('forceStopScreenShare', ({ message }) => {
+        alert(message);
+        // Stop screen sharing if currently sharing
+        if (isScreenSharing) {
+            stopScreenSharing();
+        }
     });
 
     // Handle screen share offer
@@ -129,21 +271,35 @@ async function answerScreenShareOffer(offerObj) {
     const peerConnection = new RTCPeerConnection(peerConfiguration);
     screenPeerConnections[sharerUserName] = peerConnection;
 
-    // Create or get remote screen video element
-    let remoteScreenEl = document.querySelector(`#screen-share-${sharerUserName}`);
-    if (!remoteScreenEl) {
-        remoteScreenEl = document.createElement('video');
+    // Create screen share video tile
+    const videoGrid = document.querySelector('#video-grid');
+    let screenTile = document.querySelector(`#video-tile-screen-${sharerUserName}`);
+    
+    if (!screenTile) {
+        screenTile = document.createElement('div');
+        screenTile.className = 'video-tile screen-share';
+        screenTile.id = `video-tile-screen-${sharerUserName}`;
+        
+        const remoteScreenEl = document.createElement('video');
         remoteScreenEl.id = `screen-share-${sharerUserName}`;
-        remoteScreenEl.className = 'video-player screen-share-video';
+        remoteScreenEl.className = 'video-player';
         remoteScreenEl.autoplay = true;
         remoteScreenEl.playsinline = true;
         
-        const wrapper = document.createElement('div');
-        wrapper.className = 'video-wrapper screen-share-wrapper';
-        wrapper.innerHTML = `<div class="video-label">${sharerDisplayName}'s Screen</div>`;
-        wrapper.appendChild(remoteScreenEl);
-        remoteVideosContainer.appendChild(wrapper);
+        const overlay = document.createElement('div');
+        overlay.className = 'video-overlay';
+        overlay.innerHTML = `
+            <div class="video-label">
+                <i class="bi bi-display"></i> ${sharerDisplayName}'s Screen
+            </div>
+        `;
+        
+        screenTile.appendChild(remoteScreenEl);
+        screenTile.appendChild(overlay);
+        videoGrid.insertBefore(screenTile, videoGrid.firstChild);
     }
+    
+    const remoteScreenEl = document.querySelector(`#screen-share-${sharerUserName}`);
 
     const remoteStream = new MediaStream();
     remoteScreenEl.srcObject = remoteStream;
@@ -181,22 +337,15 @@ async function answerScreenShareOffer(offerObj) {
 }
 
 function updateParticipantMediaState(remoteUserName, isVideoEnabled, isAudioEnabled) {
-    const videoEl = document.querySelector(`#remote-video-${remoteUserName}`);
-    if (videoEl && videoEl.parentElement) {
-        const wrapper = videoEl.parentElement;
-        let statusDiv = wrapper.querySelector('.media-status');
-        
-        if (!statusDiv) {
-            statusDiv = document.createElement('div');
-            statusDiv.className = 'media-status';
-            wrapper.appendChild(statusDiv);
-        }
-        
-        let statusText = '';
-        if (!isVideoEnabled) statusText += '<i class="bi bi-camera-video-off-fill"></i> ';
-        if (!isAudioEnabled) statusText += '<i class="bi bi-mic-mute-fill"></i>';
-        
-        statusDiv.innerHTML = statusText;
-        statusDiv.style.display = (!isVideoEnabled || !isAudioEnabled) ? 'block' : 'none';
+    // Update audio icon
+    const audioIcon = document.querySelector(`#audio-icon-${remoteUserName}`);
+    if (audioIcon) {
+        audioIcon.className = isAudioEnabled ? 'video-icon bi bi-mic-fill' : 'video-icon bi bi-mic-mute-fill muted';
+    }
+    
+    // Update video icon
+    const videoIcon = document.querySelector(`#video-icon-${remoteUserName}`);
+    if (videoIcon) {
+        videoIcon.className = isVideoEnabled ? 'video-icon bi bi-camera-video-fill' : 'video-icon bi bi-camera-video-off-fill muted';
     }
 }

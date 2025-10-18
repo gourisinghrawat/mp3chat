@@ -2,9 +2,15 @@
 const fs = require('fs');
 const https = require('https')
 const express = require('express');
+const path = require('path');
 const app = express();
 const socketio = require('socket.io');
 app.use(express.static(__dirname))
+
+// Serve index.html for meeting ID routes (e.g., /ABC123XY)
+app.get('/:meetingId([A-Z0-9]{8})', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 //we need a key and cert to run https
 //we generated them with mkcert
@@ -30,10 +36,18 @@ expressServer.listen(8181);
 
 // Store meetings and their participants
 const meetings = new Map();
-// meetingId => { participants: [{userName, socketId, displayName}], offers: {}, screenSharer: null }
+// meetingId => { 
+//   admin: userName,
+//   coHosts: [userName],
+//   participants: [{userName, socketId, displayName, isAdmin, isCoHost, permissions: {canUnmute, canVideo, canScreenShare}}],
+//   waitingRoom: [{userName, socketId, displayName}],
+//   offers: {}, 
+//   screenSharer: null,
+//   settings: { waitingRoomEnabled: true }
+// }
 
 const connectedSockets = new Map();
-// socketId => {userName, displayName, meetingId}
+// socketId => {userName, displayName, meetingId, isInWaitingRoom}
 
 io.on('connection', (socket) => {
     console.log("Someone has connected");
@@ -46,7 +60,7 @@ io.on('connection', (socket) => {
         return;
     }
 
-    connectedSockets.set(socket.id, { userName, displayName, meetingId: null });
+    connectedSockets.set(socket.id, { userName, displayName, meetingId: null, isInWaitingRoom: false });
 
     // Create a new meeting
     socket.on('createMeeting', ({ meetingId, displayName }) => {
@@ -56,13 +70,27 @@ io.on('connection', (socket) => {
         }
 
         meetings.set(meetingId, {
+            admin: userName,
+            coHosts: [],
             participants: [{
                 userName,
                 socketId: socket.id,
-                displayName
+                displayName,
+                isAdmin: true,
+                isCoHost: false,
+                handRaised: false,
+                permissions: {
+                    canUnmute: true,
+                    canVideo: true,
+                    canScreenShare: true
+                }
             }],
+            waitingRoom: [],
             offers: {},
-            screenSharer: null
+            screenSharer: null,
+            settings: {
+                waitingRoomEnabled: true
+            }
         });
 
         const socketData = connectedSockets.get(socket.id);
@@ -73,7 +101,13 @@ io.on('connection', (socket) => {
         
         socket.emit('meetingJoined', { 
             participants: meetings.get(meetingId).participants,
-            meetingId 
+            meetingId,
+            isAdmin: true,
+            permissions: {
+                canUnmute: true,
+                canVideo: true,
+                canScreenShare: true
+            }
         });
     });
 
@@ -85,33 +119,70 @@ io.on('connection', (socket) => {
         }
 
         const meeting = meetings.get(meetingId);
-        meeting.participants.push({
-            userName,
-            socketId: socket.id,
-            displayName
-        });
-
         const socketData = connectedSockets.get(socket.id);
         socketData.meetingId = meetingId;
 
-        socket.join(meetingId);
-        console.log(`${displayName} joined meeting ${meetingId}`);
+        // Check if waiting room is enabled
+        if (meeting.settings.waitingRoomEnabled && meeting.admin !== userName) {
+            // Add to waiting room
+            meeting.waitingRoom.push({
+                userName,
+                socketId: socket.id,
+                displayName
+            });
+            socketData.isInWaitingRoom = true;
 
-        // Notify existing participants
-        socket.to(meetingId).emit('newParticipant', {
-            participant: { userName, displayName }
-        });
+            socket.emit('waitingRoomJoined', { meetingId });
+            console.log(`${displayName} is in waiting room for meeting ${meetingId}`);
 
-        // Send current participants to the new joiner
-        socket.emit('meetingJoined', { 
-            participants: meeting.participants,
-            meetingId 
-        });
+            // Notify admin about new person in waiting room
+            const adminParticipant = meeting.participants.find(p => p.isAdmin);
+            if (adminParticipant) {
+                io.to(adminParticipant.socketId).emit('waitingRoomUpdate', {
+                    waitingRoom: meeting.waitingRoom
+                });
+            }
+        } else {
+            // Direct join (admin or waiting room disabled)
+            meeting.participants.push({
+                userName,
+                socketId: socket.id,
+                displayName,
+                isAdmin: false,
+                isCoHost: false,
+                handRaised: false,
+                permissions: {
+                    canUnmute: true,
+                    canVideo: true,
+                    canScreenShare: false
+                }
+            });
 
-        // Update all participants
-        io.to(meetingId).emit('participantsUpdate', { 
-            participants: meeting.participants 
-        });
+            socket.join(meetingId);
+            console.log(`${displayName} joined meeting ${meetingId}`);
+
+            // Notify existing participants
+            socket.to(meetingId).emit('newParticipant', {
+                participant: { userName, displayName }
+            });
+
+            // Send current participants to the new joiner
+            socket.emit('meetingJoined', { 
+                participants: meeting.participants,
+                meetingId,
+                isAdmin: false,
+                permissions: {
+                    canUnmute: true,
+                    canVideo: true,
+                    canScreenShare: false
+                }
+            });
+
+            // Update all participants
+            io.to(meetingId).emit('participantsUpdate', { 
+                participants: meeting.participants 
+            });
+        }
     });
 
     // Handle new offer
@@ -298,6 +369,43 @@ io.on('connection', (socket) => {
         });
     });
 
+    // Admin: Force stop screen sharing
+    socket.on('forceStopScreenShare', ({ meetingId, userName: targetUser }) => {
+        const meeting = meetings.get(meetingId);
+        const socketData = connectedSockets.get(socket.id);
+        
+        if (!meeting || !socketData || socketData.meetingId !== meetingId) return;
+
+        // Check if requester is admin or co-host
+        const requester = meeting.participants.find(p => p.socketId === socket.id);
+        if (!requester || (!requester.isAdmin && !requester.isCoHost)) {
+            socket.emit('error', { message: 'Only admin or co-hosts can stop screen sharing' });
+            return;
+        }
+
+        // Find target user
+        const userToStop = meeting.participants.find(p => p.userName === targetUser);
+        if (!userToStop) return;
+
+        console.log(`Admin/Co-Host forcing stop screen share for ${userToStop.displayName}`);
+
+        // Clear screen sharer
+        if (meeting.screenSharer === targetUser) {
+            meeting.screenSharer = null;
+        }
+
+        // Notify the user to stop sharing
+        io.to(userToStop.socketId).emit('forceStopScreenShare', {
+            message: 'Host has stopped your screen sharing'
+        });
+
+        // Notify all participants that screen sharing stopped
+        io.to(meetingId).emit('screenSharingStopped', {
+            userName: targetUser,
+            displayName: userToStop.displayName
+        });
+    });
+
     // Handle screen share offer
     socket.on('screenShareOffer', ({ offer, targetUserName, meetingId, sharerUserName, sharerDisplayName }) => {
         const socketData = connectedSockets.get(socket.id);
@@ -363,6 +471,309 @@ io.on('connection', (socket) => {
         ackFunction({ participants: meeting.participants });
     });
 
+    // Admin: Admit user from waiting room
+    socket.on('admitFromWaitingRoom', ({ meetingId, userName: userToAdmit }) => {
+        const meeting = meetings.get(meetingId);
+        const socketData = connectedSockets.get(socket.id);
+        
+        if (!meeting || !socketData || socketData.meetingId !== meetingId) return;
+
+        // Check if requester is admin or co-host
+        const requester = meeting.participants.find(p => p.socketId === socket.id);
+        if (!requester || (!requester.isAdmin && !requester.isCoHost)) {
+            socket.emit('error', { message: 'Only admin or co-hosts can admit users' });
+            return;
+        }
+
+        // Find user in waiting room
+        const userIndex = meeting.waitingRoom.findIndex(u => u.userName === userToAdmit);
+        if (userIndex === -1) return;
+
+        const user = meeting.waitingRoom[userIndex];
+        meeting.waitingRoom.splice(userIndex, 1);
+
+        // Add to participants
+        meeting.participants.push({
+            userName: user.userName,
+            socketId: user.socketId,
+            displayName: user.displayName,
+            isAdmin: false,
+            isCoHost: false,
+            handRaised: false,
+            permissions: {
+                canUnmute: true,
+                canVideo: true,
+                canScreenShare: false
+            }
+        });
+
+        const userSocketData = connectedSockets.get(user.socketId);
+        if (userSocketData) {
+            userSocketData.isInWaitingRoom = false;
+        }
+
+        io.to(user.socketId).emit('admittedToMeeting', {
+            participants: meeting.participants,
+            meetingId,
+            isAdmin: false,
+            permissions: {
+                canUnmute: true,
+                canVideo: true,
+                canScreenShare: false
+            }
+        });
+
+        // Let them join the room
+        const userSocket = io.sockets.sockets.get(user.socketId);
+        if (userSocket) {
+            userSocket.join(meetingId);
+        }
+
+        // Notify all participants
+        socket.to(meetingId).emit('newParticipant', {
+            participant: { userName: user.userName, displayName: user.displayName }
+        });
+
+        io.to(meetingId).emit('participantsUpdate', { 
+            participants: meeting.participants 
+        });
+
+        // Update waiting room for admin
+        const adminParticipant = meeting.participants.find(p => p.isAdmin);
+        if (adminParticipant) {
+            io.to(adminParticipant.socketId).emit('waitingRoomUpdate', {
+                waitingRoom: meeting.waitingRoom
+            });
+        }
+    });
+
+    // Admin: Deny user from waiting room
+    socket.on('denyFromWaitingRoom', ({ meetingId, userName: userToDeny }) => {
+        const meeting = meetings.get(meetingId);
+        const socketData = connectedSockets.get(socket.id);
+        
+        if (!meeting || !socketData || socketData.meetingId !== meetingId) return;
+
+        // Check if requester is admin or co-host
+        const requester = meeting.participants.find(p => p.socketId === socket.id);
+        if (!requester || (!requester.isAdmin && !requester.isCoHost)) return;
+
+        // Find user in waiting room
+        const userIndex = meeting.waitingRoom.findIndex(u => u.userName === userToDeny);
+        if (userIndex === -1) return;
+
+        const user = meeting.waitingRoom[userIndex];
+        meeting.waitingRoom.splice(userIndex, 1);
+
+        // Notify user they were denied
+        io.to(user.socketId).emit('deniedEntry', { message: 'The host denied your entry to the meeting' });
+
+        // Update waiting room for admin
+        const adminParticipant = meeting.participants.find(p => p.isAdmin);
+        if (adminParticipant) {
+            io.to(adminParticipant.socketId).emit('waitingRoomUpdate', {
+                waitingRoom: meeting.waitingRoom
+            });
+        }
+
+        // Disconnect the denied user
+        const userSocket = io.sockets.sockets.get(user.socketId);
+        if (userSocket) {
+            userSocket.disconnect();
+        }
+    });
+
+    // Admin: Make someone a co-host
+    socket.on('makeCoHost', ({ meetingId, userName: userToPromote }) => {
+        const meeting = meetings.get(meetingId);
+        const socketData = connectedSockets.get(socket.id);
+        
+        if (!meeting || !socketData || socketData.meetingId !== meetingId) return;
+
+        // Check if requester is admin
+        const requester = meeting.participants.find(p => p.socketId === socket.id);
+        if (!requester || !requester.isAdmin) {
+            socket.emit('error', { message: 'Only admin can assign co-hosts' });
+            return;
+        }
+
+        // Find user in participants
+        const user = meeting.participants.find(p => p.userName === userToPromote);
+        if (!user) return;
+
+        user.isCoHost = true;
+        user.permissions.canScreenShare = true;
+        meeting.coHosts.push(userToPromote);
+
+        // Notify the promoted user
+        io.to(user.socketId).emit('promotedToCoHost', {
+            permissions: user.permissions
+        });
+
+        // Notify all participants
+        io.to(meetingId).emit('participantsUpdate', { 
+            participants: meeting.participants 
+        });
+
+        console.log(`${user.displayName} promoted to co-host in meeting ${meetingId}`);
+    });
+
+    // Admin: Update user permissions
+    socket.on('updateUserPermissions', ({ meetingId, userName: targetUser, permissions }) => {
+        const meeting = meetings.get(meetingId);
+        const socketData = connectedSockets.get(socket.id);
+        
+        if (!meeting || !socketData || socketData.meetingId !== meetingId) return;
+
+        // Check if requester is admin or co-host
+        const requester = meeting.participants.find(p => p.socketId === socket.id);
+        if (!requester || (!requester.isAdmin && !requester.isCoHost)) {
+            socket.emit('error', { message: 'Only admin or co-hosts can manage permissions' });
+            return;
+        }
+
+        // Find target user
+        const user = meeting.participants.find(p => p.userName === targetUser);
+        if (!user) return;
+
+        // Update permissions
+        user.permissions = { ...user.permissions, ...permissions };
+
+        // Notify the user
+        io.to(user.socketId).emit('permissionsUpdated', {
+            permissions: user.permissions
+        });
+
+        // Notify all participants about the update
+        io.to(meetingId).emit('participantsUpdate', { 
+            participants: meeting.participants 
+        });
+
+        console.log(`Permissions updated for ${user.displayName} in meeting ${meetingId}`);
+    });
+
+    // Admin: Remove participant from meeting
+    socket.on('removeParticipant', ({ meetingId, userName: targetUser }) => {
+        const meeting = meetings.get(meetingId);
+        const socketData = connectedSockets.get(socket.id);
+        
+        if (!meeting || !socketData || socketData.meetingId !== meetingId) return;
+
+        // Check if requester is admin or co-host
+        const requester = meeting.participants.find(p => p.socketId === socket.id);
+        if (!requester || (!requester.isAdmin && !requester.isCoHost)) {
+            socket.emit('error', { message: 'Only admin or co-hosts can remove participants' });
+            return;
+        }
+
+        // Find target user
+        const userToRemove = meeting.participants.find(p => p.userName === targetUser);
+        if (!userToRemove || userToRemove.isAdmin) {
+            // Cannot remove admin
+            return;
+        }
+
+        console.log(`Removing ${userToRemove.displayName} from meeting ${meetingId}`);
+
+        // Remove from participants list
+        meeting.participants = meeting.participants.filter(p => p.userName !== targetUser);
+
+        // Remove from co-hosts if applicable
+        meeting.coHosts = meeting.coHosts.filter(u => u !== targetUser);
+
+        // Notify the removed user
+        io.to(userToRemove.socketId).emit('removedFromMeeting', {
+            message: 'You have been removed from the meeting by the host'
+        });
+
+        // Update socket data
+        const removedSocketData = connectedSockets.get(userToRemove.socketId);
+        if (removedSocketData) {
+            removedSocketData.meetingId = null;
+        }
+
+        // Leave socket room
+        const removedSocket = io.sockets.sockets.get(userToRemove.socketId);
+        if (removedSocket) {
+            removedSocket.leave(meetingId);
+        }
+
+        // Notify other participants
+        socket.to(meetingId).emit('participantLeft', { userName: targetUser });
+        socket.to(meetingId).emit('participantUpdate', {
+            participants: meeting.participants
+        });
+
+        // Update waiting room list for admin/co-hosts
+        meeting.participants.filter(p => p.isAdmin || p.isCoHost).forEach(admin => {
+            io.to(admin.socketId).emit('waitingRoomUpdate', {
+                waitingRoom: meeting.waitingRoom
+            });
+        });
+    });
+
+    // Admin: Toggle waiting room
+    socket.on('toggleWaitingRoom', ({ meetingId, enabled }) => {
+        const meeting = meetings.get(meetingId);
+        const socketData = connectedSockets.get(socket.id);
+        
+        if (!meeting || !socketData || socketData.meetingId !== meetingId) return;
+
+        // Check if requester is admin
+        const requester = meeting.participants.find(p => p.socketId === socket.id);
+        if (!requester || !requester.isAdmin) return;
+
+        meeting.settings.waitingRoomEnabled = enabled;
+        console.log(`Waiting room ${enabled ? 'enabled' : 'disabled'} for meeting ${meetingId}`);
+    });
+
+    // Raise/lower hand
+    socket.on('raiseHand', ({ meetingId, raised }) => {
+        const meeting = meetings.get(meetingId);
+        const socketData = connectedSockets.get(socket.id);
+        
+        if (!meeting || !socketData || socketData.meetingId !== meetingId) return;
+
+        const participant = meeting.participants.find(p => p.socketId === socket.id);
+        if (participant) {
+            participant.handRaised = raised;
+            
+            // Notify all participants about hand raise status
+            io.to(meetingId).emit('participantsUpdate', {
+                participants: meeting.participants
+            });
+            
+            console.log(`${participant.displayName} ${raised ? 'raised' : 'lowered'} hand in meeting ${meetingId}`);
+        }
+    });
+
+    // Admin: Lower someone's hand
+    socket.on('lowerHand', ({ meetingId, userName: targetUserName }) => {
+        const meeting = meetings.get(meetingId);
+        const socketData = connectedSockets.get(socket.id);
+        
+        if (!meeting || !socketData || socketData.meetingId !== meetingId) return;
+
+        // Check if requester is admin or co-host
+        const requester = meeting.participants.find(p => p.socketId === socket.id);
+        if (!requester || (!requester.isAdmin && !requester.isCoHost)) return;
+
+        const participant = meeting.participants.find(p => p.userName === targetUserName);
+        if (participant) {
+            participant.handRaised = false;
+            
+            // Notify all participants
+            io.to(meetingId).emit('participantsUpdate', {
+                participants: meeting.participants
+            });
+            
+            // Notify the user whose hand was lowered
+            io.to(participant.socketId).emit('handLowered');
+            
+            console.log(`${requester.displayName} lowered ${participant.displayName}'s hand in meeting ${meetingId}`);
+        }
+    });
+
     // Handle leave meeting
     socket.on('leaveMeeting', ({ meetingId }) => {
         handleDisconnect(socket, meetingId);
@@ -384,6 +795,20 @@ function handleDisconnect(socket, meetingId) {
     const socketData = connectedSockets.get(socket.id);
     if (!socketData) return;
 
+    // Check if user was in waiting room
+    if (socketData.isInWaitingRoom) {
+        meeting.waitingRoom = meeting.waitingRoom.filter(u => u.socketId !== socket.id);
+        
+        // Update waiting room for admin
+        const adminParticipant = meeting.participants.find(p => p.isAdmin);
+        if (adminParticipant) {
+            io.to(adminParticipant.socketId).emit('waitingRoomUpdate', {
+                waitingRoom: meeting.waitingRoom
+            });
+        }
+        return;
+    }
+
     // Clear screen sharer if this user was sharing
     if (meeting.screenSharer === socketData.userName) {
         meeting.screenSharer = null;
@@ -393,8 +818,31 @@ function handleDisconnect(socket, meetingId) {
         });
     }
 
+    // Check if the leaving user is admin
+    const wasAdmin = meeting.admin === socketData.userName;
+
     // Remove participant
     meeting.participants = meeting.participants.filter(p => p.socketId !== socket.id);
+
+    // If admin left and there are still participants, assign new admin
+    if (wasAdmin && meeting.participants.length > 0) {
+        // Make the first co-host admin, or first participant
+        const newAdmin = meeting.coHosts.length > 0 
+            ? meeting.participants.find(p => p.isCoHost)
+            : meeting.participants[0];
+        
+        if (newAdmin) {
+            meeting.admin = newAdmin.userName;
+            newAdmin.isAdmin = true;
+            newAdmin.permissions.canScreenShare = true;
+            
+            io.to(newAdmin.socketId).emit('promotedToAdmin', {
+                permissions: newAdmin.permissions
+            });
+            
+            console.log(`${newAdmin.displayName} promoted to admin in meeting ${meetingId}`);
+        }
+    }
 
     // Notify other participants
     socket.to(meetingId).emit('participantLeft', { userName: socketData.userName });

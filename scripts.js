@@ -3,9 +3,28 @@ let displayName = null;
 let currentMeetingId = null;
 const password = "x";
 let socket = null;
+let isAdmin = false;
+let isCoHost = false;
+let userPermissions = {
+    canUnmute: true,
+    canVideo: true,
+    canScreenShare: false
+};
 
-const localVideoEl = document.querySelector('#local-video');
-const remoteVideosContainer = document.querySelector('#remote-videos-container');
+// Check URL for meeting ID on page load
+let urlMeetingId = null;
+const urlParams = new URLSearchParams(window.location.search);
+if (urlParams.has('meeting')) {
+    urlMeetingId = urlParams.get('meeting').toUpperCase();
+}
+// Also check for meeting ID in path (e.g., /ABC123XY)
+const pathMatch = window.location.pathname.match(/\/([A-Z0-9]{8})$/i);
+if (pathMatch) {
+    urlMeetingId = pathMatch[1].toUpperCase();
+}
+
+let localVideoEl = null;
+const videoGrid = document.querySelector('#video-grid');
 
 let localStream; //a var to hold the local video stream
 let peerConnections = {}; //store multiple peer connections
@@ -17,6 +36,13 @@ let isAudioEnabled = true;
 let isScreenSharing = false;
 let screenStream = null;
 let screenPeerConnections = {}; // Separate peer connections for screen sharing
+
+// Chat notification state
+let unreadMessages = 0;
+let isChatOpen = false;
+
+// Store participants for admin controls
+let currentParticipants = [];
 
 let peerConfiguration = {
     iceServers:[
@@ -32,6 +58,12 @@ let peerConfiguration = {
 // Generate unique meeting ID
 function generateMeetingId() {
     return Math.random().toString(36).substring(2, 10).toUpperCase();
+}
+
+// Update URL with meeting ID
+function updateURLWithMeetingId(meetingId) {
+    const newUrl = `${window.location.origin}/${meetingId}`;
+    window.history.pushState({ meetingId }, `Meeting ${meetingId}`, newUrl);
 }
 
 // Initialize socket connection
@@ -59,6 +91,10 @@ document.querySelector('#create-meeting').addEventListener('click', async () => 
     }
     
     currentMeetingId = generateMeetingId();
+    
+    // Update URL with meeting ID
+    updateURLWithMeetingId(currentMeetingId);
+    
     initializeSocket();
     
     // Wait for socket to connect
@@ -83,6 +119,9 @@ document.querySelector('#join-meeting').addEventListener('click', async () => {
         return;
     }
     
+    // Update URL with meeting ID
+    updateURLWithMeetingId(currentMeetingId);
+    
     initializeSocket();
     
     // Wait for socket to connect
@@ -94,17 +133,563 @@ document.querySelector('#join-meeting').addEventListener('click', async () => {
 // Show call screen
 async function showCallScreen() {
     document.querySelector('#setup-screen').style.display = 'none';
-    document.querySelector('#call-screen').style.display = 'block';
-    document.querySelector('#user-name').innerHTML = displayName;
+    document.querySelector('#waiting-room-screen').style.display = 'none';
+    document.querySelector('#call-screen').style.display = 'flex';
+    document.querySelector('#user-name-display').innerHTML = displayName;
     document.querySelector('#current-meeting-id').innerHTML = currentMeetingId;
     
+    // Show role badge and waiting room tab
+    if (isAdmin) {
+        const badge = document.querySelector('#role-badge');
+        badge.textContent = 'Admin';
+        badge.className = 'badge bg-danger ms-2';
+        badge.style.display = 'inline';
+        // Show waiting room tab and button for admin
+        document.querySelector('#waiting-room-tab').style.display = 'block';
+        document.querySelector('#toggle-waiting-room').style.display = 'flex';
+    } else if (isCoHost) {
+        const badge = document.querySelector('#role-badge');
+        badge.textContent = 'Co-Host';
+        badge.className = 'badge bg-warning ms-2';
+        badge.style.display = 'inline';
+        // Show waiting room tab and button for co-host
+        document.querySelector('#waiting-room-tab').style.display = 'block';
+        document.querySelector('#toggle-waiting-room').style.display = 'flex';
+    }
+    
     await fetchUserMedia();
+    addVideoToGrid(userName, displayName, true);
 }
 
-// Copy meeting ID to clipboard
+// Add video to grid
+function addVideoToGrid(videoUserName, displayName, isLocal = false, participantData = null) {
+    const videoGrid = document.querySelector('#video-grid');
+    const existingTile = document.querySelector(`#video-tile-${videoUserName}`);
+    
+    if (existingTile) return;
+    
+    const videoTile = document.createElement('div');
+    videoTile.className = 'video-tile';
+    videoTile.id = `video-tile-${videoUserName}`;
+    
+    const video = document.createElement('video');
+    video.id = isLocal ? 'local-video' : `remote-video-${videoUserName}`;
+    video.className = 'video-player';
+    video.autoplay = true;
+    video.playsinline = true;
+    if (isLocal) video.muted = true;
+    
+    const overlay = document.createElement('div');
+    overlay.className = 'video-overlay';
+    
+    // Check if we should show admin controls
+    const showAdminControls = (isAdmin || isCoHost) && !isLocal && participantData && !participantData.isAdmin;
+    
+    // Determine role badge
+    let roleBadge = '';
+    if (isLocal) {
+        if (isAdmin) {
+            roleBadge = '<span class="video-role-badge admin-badge">Admin</span>';
+        } else if (isCoHost) {
+            roleBadge = '<span class="video-role-badge cohost-badge">Co-Host</span>';
+        }
+    } else if (participantData) {
+        if (participantData.isAdmin) {
+            roleBadge = '<span class="video-role-badge admin-badge">Admin</span>';
+        } else if (participantData.isCoHost) {
+            roleBadge = '<span class="video-role-badge cohost-badge">Co-Host</span>';
+        }
+    }
+    
+    // Check if hand is raised (for local or remote)
+    const handRaised = isLocal ? isHandRaised : (participantData?.handRaised || false);
+    
+    overlay.innerHTML = `
+        <div class="video-label">
+            <div class="video-name-container">
+                <span class="video-display-name">${displayName}${isLocal ? ' (You)' : ''}</span>
+                ${roleBadge}
+                ${handRaised ? '<i class="bi bi-hand-index-thumb-fill hand-raised-icon" title="Hand raised"></i>' : ''}
+            </div>
+            ${showAdminControls ? `
+                <div class="video-admin-menu">
+                    <button class="video-menu-btn" data-username="${videoUserName}">
+                        <i class="bi bi-three-dots-vertical"></i>
+                    </button>
+                    <div class="video-menu-dropdown" id="video-menu-${videoUserName}" style="display: none;">
+                        ${isAdmin && participantData && !participantData.isCoHost ? `<div class="video-menu-item make-cohost-video" data-username="${videoUserName}">
+                            <i class="bi bi-star-fill"></i> Make Co-Host
+                        </div>` : ''}
+                        ${participantData?.handRaised ? `<div class="video-menu-item lower-hand-video" data-username="${videoUserName}">
+                            <i class="bi bi-hand-index-thumb"></i> Lower Hand
+                        </div>` : ''}
+                        <div class="video-menu-item toggle-audio-video" data-username="${videoUserName}">
+                            <i class="bi bi-mic${participantData?.permissions?.canUnmute ? '-mute' : ''}"></i> 
+                            ${participantData?.permissions?.canUnmute ? 'Disable' : 'Enable'} Audio
+                        </div>
+                        <div class="video-menu-item toggle-video-video" data-username="${videoUserName}">
+                            <i class="bi bi-camera-video${participantData?.permissions?.canVideo ? '-off' : ''}"></i> 
+                            ${participantData?.permissions?.canVideo ? 'Disable' : 'Enable'} Video
+                        </div>
+                        <div class="video-menu-item toggle-screenshare-video" data-username="${videoUserName}">
+                            <i class="bi bi-display"></i> 
+                            ${participantData?.permissions?.canScreenShare ? 'Disable' : 'Enable'} Screen Share
+                        </div>
+                        <div class="video-menu-item stop-screenshare-video" data-username="${videoUserName}">
+                            <i class="bi bi-stop-circle"></i> Stop Screen Sharing
+                        </div>
+                        <div class="menu-divider"></div>
+                        <div class="video-menu-item remove-participant-video" data-username="${videoUserName}">
+                            <i class="bi bi-x-circle"></i> Remove from Meeting
+                        </div>
+                    </div>
+                </div>
+            ` : ''}
+        </div>
+        <div class="video-controls">
+            <i class="video-icon bi bi-mic-fill" id="audio-icon-${videoUserName}"></i>
+            <i class="video-icon bi bi-camera-video-fill" id="video-icon-${videoUserName}"></i>
+        </div>
+    `;
+    
+    videoTile.appendChild(video);
+    videoTile.appendChild(overlay);
+    videoGrid.appendChild(videoTile);
+    
+    if (isLocal && localStream) {
+        video.srcObject = localStream;
+    }
+    
+    // Add event listeners for admin controls
+    if (showAdminControls) {
+        setTimeout(() => {
+            const menuBtn = videoTile.querySelector('.video-menu-btn');
+            if (menuBtn) {
+                menuBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const menu = document.querySelector(`#video-menu-${videoUserName}`);
+                    
+                    // Close all other menus
+                    document.querySelectorAll('.video-menu-dropdown').forEach(m => {
+                        if (m !== menu) m.style.display = 'none';
+                    });
+                    
+                    // Toggle current menu
+                    if (menu.style.display === 'none' || !menu.style.display) {
+                        // Position menu like YouTube
+                        const btnRect = menuBtn.getBoundingClientRect();
+                        const menuWidth = 220;
+                        const menuMaxHeight = 400;
+                        
+                        // Calculate position
+                        let left = btnRect.right + 8; // 8px gap to the right
+                        let top = btnRect.top;
+                        
+                        // Check if menu would go off right edge
+                        if (left + menuWidth > window.innerWidth) {
+                            left = btnRect.left - menuWidth - 8; // Position to the left
+                        }
+                        
+                        // Check if menu would go off bottom edge
+                        if (top + menuMaxHeight > window.innerHeight) {
+                            top = Math.max(10, window.innerHeight - menuMaxHeight - 10);
+                        }
+                        
+                        // Check if menu would go off top edge
+                        if (top < 10) {
+                            top = 10;
+                        }
+                        
+                        menu.style.left = left + 'px';
+                        menu.style.top = top + 'px';
+                        menu.style.display = 'block';
+                    } else {
+                        menu.style.display = 'none';
+                    }
+                });
+            }
+            
+            // Add action listeners
+            videoTile.querySelectorAll('.make-cohost-video').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const targetUser = e.currentTarget.dataset.username;
+                    socket.emit('makeCoHost', { meetingId: currentMeetingId, userName: targetUser });
+                    document.querySelectorAll('.video-menu-dropdown').forEach(m => m.style.display = 'none');
+                });
+            });
+            
+            videoTile.querySelectorAll('.lower-hand-video').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const targetUser = e.currentTarget.dataset.username;
+                    socket.emit('lowerHand', { meetingId: currentMeetingId, userName: targetUser });
+                    document.querySelectorAll('.video-menu-dropdown').forEach(m => m.style.display = 'none');
+                });
+            });
+            
+            videoTile.querySelectorAll('.toggle-audio-video, .toggle-video-video, .toggle-screenshare-video').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const targetUser = e.currentTarget.dataset.username;
+                    const permission = e.currentTarget.classList.contains('toggle-audio-video') ? 'canUnmute' :
+                                      e.currentTarget.classList.contains('toggle-video-video') ? 'canVideo' : 'canScreenShare';
+                    
+                    const newValue = !participantData.permissions[permission];
+                    
+                    socket.emit('updateUserPermissions', {
+                        meetingId: currentMeetingId,
+                        userName: targetUser,
+                        permissions: { [permission]: newValue }
+                    });
+                    document.querySelectorAll('.video-menu-dropdown').forEach(m => m.style.display = 'none');
+                });
+            });
+            
+            videoTile.querySelectorAll('.stop-screenshare-video').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const targetUser = e.currentTarget.dataset.username;
+                    
+                    if (confirm(`Stop screen sharing for ${displayName}?`)) {
+                        socket.emit('forceStopScreenShare', { meetingId: currentMeetingId, userName: targetUser });
+                        document.querySelectorAll('.video-menu-dropdown').forEach(m => m.style.display = 'none');
+                    }
+                });
+            });
+            
+            videoTile.querySelectorAll('.remove-participant-video').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const targetUser = e.currentTarget.dataset.username;
+                    
+                    if (confirm(`Remove ${displayName} from the meeting?`)) {
+                        socket.emit('removeParticipant', { meetingId: currentMeetingId, userName: targetUser });
+                        document.querySelectorAll('.video-menu-dropdown').forEach(m => m.style.display = 'none');
+                    }
+                });
+            });
+        }, 100);
+    }
+}
+
+// Update video menus with current participant data
+function updateVideoMenus(participants) {
+    participants.forEach(participant => {
+        const menu = document.querySelector(`#video-menu-${participant.userName}`);
+        if (!menu) return;
+        
+        const isCurrentUserAdmin = isAdmin;
+        const showMakeCoHost = isCurrentUserAdmin && !participant.isCoHost;
+        
+        // Update menu items
+        menu.innerHTML = `
+            ${showMakeCoHost ? `<div class="video-menu-item make-cohost-video" data-username="${participant.userName}">
+                <i class="bi bi-star-fill"></i> Make Co-Host
+            </div>` : ''}
+            ${participant.handRaised ? `<div class="video-menu-item lower-hand-video" data-username="${participant.userName}">
+                <i class="bi bi-hand-index-thumb"></i> Lower Hand
+            </div>` : ''}
+            <div class="video-menu-item toggle-audio-video" data-username="${participant.userName}">
+                <i class="bi bi-mic${participant.permissions?.canUnmute ? '-mute' : ''}"></i> 
+                ${participant.permissions?.canUnmute ? 'Disable' : 'Enable'} Audio
+            </div>
+            <div class="video-menu-item toggle-video-video" data-username="${participant.userName}">
+                <i class="bi bi-camera-video${participant.permissions?.canVideo ? '-off' : ''}"></i> 
+                ${participant.permissions?.canVideo ? 'Disable' : 'Enable'} Video
+            </div>
+            <div class="video-menu-item toggle-screenshare-video" data-username="${participant.userName}">
+                <i class="bi bi-display"></i> 
+                ${participant.permissions?.canScreenShare ? 'Disable' : 'Enable'} Screen Share
+            </div>
+            <div class="video-menu-item stop-screenshare-video" data-username="${participant.userName}">
+                <i class="bi bi-stop-circle"></i> Stop Screen Sharing
+            </div>
+            <div class="menu-divider"></div>
+            <div class="video-menu-item remove-participant-video" data-username="${participant.userName}">
+                <i class="bi bi-x-circle"></i> Remove from Meeting
+            </div>
+        `;
+        
+        // Re-attach event listeners
+        menu.querySelectorAll('.make-cohost-video').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const targetUser = e.currentTarget.dataset.username;
+                socket.emit('makeCoHost', { meetingId: currentMeetingId, userName: targetUser });
+                document.querySelectorAll('.video-menu-dropdown').forEach(m => m.style.display = 'none');
+            });
+        });
+        
+        menu.querySelectorAll('.lower-hand-video').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const targetUser = e.currentTarget.dataset.username;
+                socket.emit('lowerHand', { meetingId: currentMeetingId, userName: targetUser });
+                document.querySelectorAll('.video-menu-dropdown').forEach(m => m.style.display = 'none');
+            });
+        });
+        
+        menu.querySelectorAll('.toggle-audio-video, .toggle-video-video, .toggle-screenshare-video').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const targetUser = e.currentTarget.dataset.username;
+                const permission = e.currentTarget.classList.contains('toggle-audio-video') ? 'canUnmute' :
+                                  e.currentTarget.classList.contains('toggle-video-video') ? 'canVideo' : 'canScreenShare';
+                
+                const newValue = !participant.permissions[permission];
+                
+                socket.emit('updateUserPermissions', {
+                    meetingId: currentMeetingId,
+                    userName: targetUser,
+                    permissions: { [permission]: newValue }
+                });
+                document.querySelectorAll('.video-menu-dropdown').forEach(m => m.style.display = 'none');
+            });
+        });
+        
+        menu.querySelectorAll('.stop-screenshare-video').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const targetUser = e.currentTarget.dataset.username;
+                
+                if (confirm(`Stop screen sharing for ${participant.displayName}?`)) {
+                    socket.emit('forceStopScreenShare', { meetingId: currentMeetingId, userName: targetUser });
+                    document.querySelectorAll('.video-menu-dropdown').forEach(m => m.style.display = 'none');
+                }
+            });
+        });
+        
+        menu.querySelectorAll('.remove-participant-video').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const targetUser = e.currentTarget.dataset.username;
+                
+                if (confirm(`Remove ${participant.displayName} from the meeting?`)) {
+                    socket.emit('removeParticipant', { meetingId: currentMeetingId, userName: targetUser });
+                    document.querySelectorAll('.video-menu-dropdown').forEach(m => m.style.display = 'none');
+                }
+            });
+        });
+    });
+}
+
+// Update hand raised indicators on video tiles
+function updateHandRaisedIndicators(participants) {
+    participants.forEach(participant => {
+        const videoTile = document.querySelector(`#video-tile-${participant.userName}`);
+        if (!videoTile) return;
+        
+        const videoNameContainer = videoTile.querySelector('.video-name-container');
+        if (!videoNameContainer) return;
+        
+        // Remove existing hand icon if present
+        const existingHandIcon = videoNameContainer.querySelector('.hand-raised-icon');
+        if (existingHandIcon) {
+            existingHandIcon.remove();
+        }
+        
+        // Add hand icon if hand is raised
+        if (participant.handRaised) {
+            const handIcon = document.createElement('i');
+            handIcon.className = 'bi bi-hand-index-thumb-fill hand-raised-icon';
+            handIcon.title = 'Hand raised';
+            videoNameContainer.appendChild(handIcon);
+        }
+    });
+}
+
+// Update local user's hand raised indicator
+function updateLocalHandIndicator() {
+    const localTile = document.querySelector(`#video-tile-${userName}`);
+    if (!localTile) return;
+    
+    const videoNameContainer = localTile.querySelector('.video-name-container');
+    if (!videoNameContainer) return;
+    
+    // Remove existing hand icon if present
+    const existingHandIcon = videoNameContainer.querySelector('.hand-raised-icon');
+    if (existingHandIcon) {
+        existingHandIcon.remove();
+    }
+    
+    // Add hand icon if hand is raised
+    if (isHandRaised) {
+        const handIcon = document.createElement('i');
+        handIcon.className = 'bi bi-hand-index-thumb-fill hand-raised-icon';
+        handIcon.title = 'Hand raised';
+        videoNameContainer.appendChild(handIcon);
+    }
+}
+
+// Close video menus when clicking outside
+document.addEventListener('click', () => {
+    document.querySelectorAll('.video-menu-dropdown').forEach(m => m.style.display = 'none');
+});
+
+// Toggle chat sidebar
+document.querySelector('#toggle-chat').addEventListener('click', () => {
+    const sidebar = document.querySelector('#sidebar-panel');
+    const wasHidden = sidebar.classList.contains('sidebar-hidden');
+    sidebar.classList.toggle('sidebar-hidden');
+    
+    // Switch to chat tab
+    if (wasHidden) {
+        const chatTab = document.querySelector('#chat-tab');
+        const chatContent = document.querySelector('#chat-content');
+        document.querySelectorAll('.nav-link').forEach(tab => tab.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(pane => {
+            pane.classList.remove('show', 'active');
+        });
+        chatTab.classList.add('active');
+        chatContent.classList.add('show', 'active');
+        
+        // Mark chat as open and clear notifications
+        isChatOpen = true;
+        unreadMessages = 0;
+        updateChatBadge();
+    } else {
+        // Check if we're closing the sidebar or switching tabs
+        const chatTab = document.querySelector('#chat-tab');
+        if (chatTab.classList.contains('active')) {
+            isChatOpen = false;
+        }
+    }
+});
+
+// Toggle participants sidebar
+document.querySelector('#toggle-participants').addEventListener('click', () => {
+    const sidebar = document.querySelector('#sidebar-panel');
+    sidebar.classList.toggle('sidebar-hidden');
+    
+    // Mark chat as not actively viewing
+    const chatTab = document.querySelector('#chat-tab');
+    if (!chatTab.classList.contains('active')) {
+        isChatOpen = false;
+    }
+    
+    // Switch to participants tab
+    if (!sidebar.classList.contains('sidebar-hidden')) {
+        const participantsTab = document.querySelector('#participants-tab');
+        const participantsContent = document.querySelector('#participants-content');
+        document.querySelectorAll('.nav-link').forEach(tab => tab.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(pane => {
+            pane.classList.remove('show', 'active');
+        });
+        participantsTab.classList.add('active');
+        participantsContent.classList.add('show', 'active');
+    }
+});
+
+// Toggle waiting room sidebar
+document.querySelector('#toggle-waiting-room').addEventListener('click', () => {
+    const sidebar = document.querySelector('#sidebar-panel');
+    sidebar.classList.toggle('sidebar-hidden');
+    
+    // Mark chat as not actively viewing
+    isChatOpen = false;
+    
+    // Switch to waiting room tab
+    if (!sidebar.classList.contains('sidebar-hidden')) {
+        const waitingTab = document.querySelector('#waiting-room-tab');
+        const waitingContent = document.querySelector('#waiting-room-content');
+        document.querySelectorAll('.nav-link').forEach(tab => tab.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(pane => {
+            pane.classList.remove('show', 'active');
+        });
+        waitingTab.classList.add('active');
+        waitingContent.classList.add('show', 'active');
+    }
+});
+
+document.querySelector('#close-sidebar').addEventListener('click', () => {
+    document.querySelector('#sidebar-panel').classList.add('sidebar-hidden');
+    isChatOpen = false;
+});
+
+// Listen for tab changes to track if chat is open
+document.querySelectorAll('.nav-link').forEach(tab => {
+    tab.addEventListener('click', () => {
+        const chatTab = document.querySelector('#chat-tab');
+        const sidebar = document.querySelector('#sidebar-panel');
+        isChatOpen = chatTab.classList.contains('active') && !sidebar.classList.contains('sidebar-hidden');
+        if (isChatOpen) {
+            unreadMessages = 0;
+            updateChatBadge();
+        }
+    });
+});
+
+// Update chat badge
+function updateChatBadge() {
+    const badge = document.querySelector('#chat-badge');
+    if (unreadMessages > 0 && !isChatOpen) {
+        badge.style.display = 'flex';
+        badge.textContent = '';  // Just show red dot, no number
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+// Show waiting room
+function showWaitingRoom() {
+    document.querySelector('#setup-screen').style.display = 'none';
+    document.querySelector('#waiting-room-screen').style.display = 'block';
+    document.querySelector('#waiting-meeting-id').innerHTML = currentMeetingId;
+}
+
+// Cancel joining from waiting room
+document.querySelector('#cancel-join').addEventListener('click', () => {
+    if (socket) {
+        socket.disconnect();
+    }
+    location.reload();
+});
+
+// Copy meeting link to clipboard
 document.querySelector('#copy-meeting-id').addEventListener('click', () => {
-    navigator.clipboard.writeText(currentMeetingId);
-    alert('Meeting ID copied to clipboard!');
+    const meetingUrl = `${window.location.origin}/${currentMeetingId}`;
+    navigator.clipboard.writeText(meetingUrl);
+    
+    // Update button text temporarily
+    const btn = document.querySelector('#copy-meeting-id');
+    const originalHTML = btn.innerHTML;
+    btn.innerHTML = '<i class="bi bi-check-circle"></i>';
+    btn.classList.add('btn-success');
+    btn.classList.remove('btn-outline-light');
+    
+    setTimeout(() => {
+        btn.innerHTML = originalHTML;
+        btn.classList.remove('btn-success');
+        btn.classList.add('btn-outline-light');
+    }, 2000);
+});
+
+// Raise hand
+let isHandRaised = false;
+document.querySelector('#raise-hand').addEventListener('click', () => {
+    isHandRaised = !isHandRaised;
+    
+    const raiseHandBtn = document.querySelector('#raise-hand');
+    const icon = raiseHandBtn.querySelector('i');
+    const label = raiseHandBtn.querySelector('.control-label');
+    
+    if (isHandRaised) {
+        raiseHandBtn.classList.add('active');
+        icon.classList.remove('bi-hand-index-thumb');
+        icon.classList.add('bi-hand-index-thumb-fill');
+        label.textContent = 'Lower';
+    } else {
+        raiseHandBtn.classList.remove('active');
+        icon.classList.remove('bi-hand-index-thumb-fill');
+        icon.classList.add('bi-hand-index-thumb');
+        label.textContent = 'Raise';
+    }
+    
+    // Update local video tile indicator
+    updateLocalHandIndicator();
+    
+    socket.emit('raiseHand', { meetingId: currentMeetingId, raised: isHandRaised });
 });
 
 // Leave meeting
@@ -138,6 +723,12 @@ document.querySelector('#hangup').addEventListener('click', () => {
 document.querySelector('#toggle-video').addEventListener('click', () => {
     if (!localStream) return;
     
+    // Check permission
+    if (!userPermissions.canVideo && !isVideoEnabled) {
+        alert('The host has not granted you permission to turn on video');
+        return;
+    }
+    
     const videoTrack = localStream.getVideoTracks()[0];
     if (videoTrack) {
         isVideoEnabled = !isVideoEnabled;
@@ -145,13 +736,17 @@ document.querySelector('#toggle-video').addEventListener('click', () => {
         
         const btn = document.querySelector('#toggle-video');
         if (isVideoEnabled) {
-            btn.innerHTML = '<i class="bi bi-camera-video-fill"></i> Camera On';
-            btn.classList.remove('btn-secondary');
-            btn.classList.add('btn-primary');
+            btn.innerHTML = '<i class="bi bi-camera-video-fill"></i><span class="control-label">Stop video</span>';
+            btn.classList.remove('off');
         } else {
-            btn.innerHTML = '<i class="bi bi-camera-video-off-fill"></i> Camera Off';
-            btn.classList.remove('btn-primary');
-            btn.classList.add('btn-secondary');
+            btn.innerHTML = '<i class="bi bi-camera-video-off-fill"></i><span class="control-label">Start video</span>';
+            btn.classList.add('off');
+        }
+        
+        // Update local video icon
+        const localIcon = document.querySelector('#video-icon-local');
+        if (localIcon) {
+            localIcon.className = isVideoEnabled ? 'video-icon bi bi-camera-video-fill' : 'video-icon bi bi-camera-video-off-fill muted';
         }
         
         // Notify other participants
@@ -168,6 +763,12 @@ document.querySelector('#toggle-video').addEventListener('click', () => {
 document.querySelector('#toggle-audio').addEventListener('click', () => {
     if (!localStream) return;
     
+    // Check permission
+    if (!userPermissions.canUnmute && !isAudioEnabled) {
+        alert('The host has not granted you permission to unmute');
+        return;
+    }
+    
     const audioTrack = localStream.getAudioTracks()[0];
     if (audioTrack) {
         isAudioEnabled = !isAudioEnabled;
@@ -175,13 +776,17 @@ document.querySelector('#toggle-audio').addEventListener('click', () => {
         
         const btn = document.querySelector('#toggle-audio');
         if (isAudioEnabled) {
-            btn.innerHTML = '<i class="bi bi-mic-fill"></i> Mic On';
-            btn.classList.remove('btn-secondary');
-            btn.classList.add('btn-primary');
+            btn.innerHTML = '<i class="bi bi-mic-fill"></i><span class="control-label">Mute</span>';
+            btn.classList.remove('muted');
         } else {
-            btn.innerHTML = '<i class="bi bi-mic-mute-fill"></i> Mic Off';
-            btn.classList.remove('btn-primary');
-            btn.classList.add('btn-secondary');
+            btn.innerHTML = '<i class="bi bi-mic-mute-fill"></i><span class="control-label">Unmute</span>';
+            btn.classList.add('muted');
+        }
+        
+        // Update local audio icon
+        const localIcon = document.querySelector('#audio-icon-local');
+        if (localIcon) {
+            localIcon.className = isAudioEnabled ? 'video-icon bi bi-mic-fill' : 'video-icon bi bi-mic-mute-fill muted';
         }
         
         // Notify other participants
@@ -196,12 +801,25 @@ document.querySelector('#toggle-audio').addEventListener('click', () => {
 
 // Screen Sharing
 document.querySelector('#share-screen').addEventListener('click', async () => {
+    // Check permission
+    if (!userPermissions.canScreenShare && !isScreenSharing) {
+        alert('The host has not granted you permission to share screen');
+        return;
+    }
+    
     if (isScreenSharing) {
-        // Stop screen sharing
         stopScreenSharing();
     } else {
-        // Start screen sharing
         await startScreenSharing();
+    }
+    
+    const btn = document.querySelector('#share-screen');
+    if (isScreenSharing) {
+        btn.innerHTML = '<i class="bi bi-stop-circle"></i><span class="control-label">Stop share</span>';
+        btn.classList.add('active');
+    } else {
+        btn.innerHTML = '<i class="bi bi-display"></i><span class="control-label">Share</span>';
+        btn.classList.remove('active');
     }
 });
 
@@ -271,26 +889,37 @@ async function startScreenSharing() {
 }
 
 function showLocalScreenShare() {
-    // Create a local screen preview element
-    let screenPreview = document.querySelector('#local-screen-preview');
-    if (!screenPreview) {
-        screenPreview = document.createElement('video');
-        screenPreview.id = 'local-screen-preview';
-        screenPreview.className = 'video-player';
-        screenPreview.autoplay = true;
-        screenPreview.playsinline = true;
-        screenPreview.muted = true;
+    // Create a screen share video tile
+    const videoGrid = document.querySelector('#video-grid');
+    let screenTile = document.querySelector('#video-tile-screen-local');
+    
+    if (!screenTile) {
+        screenTile = document.createElement('div');
+        screenTile.className = 'video-tile screen-share';
+        screenTile.id = 'video-tile-screen-local';
         
-        const wrapper = document.createElement('div');
-        wrapper.id = 'local-screen-wrapper';
-        wrapper.className = 'video-wrapper';
-        wrapper.innerHTML = '<div class="video-label">Your Screen</div>';
-        wrapper.appendChild(screenPreview);
+        const video = document.createElement('video');
+        video.id = 'local-screen-preview';
+        video.className = 'video-player';
+        video.autoplay = true;
+        video.playsinline = true;
+        video.muted = true;
         
-        const videoWrapper = document.querySelector('#video-wrapper');
-        videoWrapper.parentElement.insertBefore(wrapper, videoWrapper.nextSibling);
+        const overlay = document.createElement('div');
+        overlay.className = 'video-overlay';
+        overlay.innerHTML = `
+            <div class="video-label">
+                <i class="bi bi-display"></i> Your Screen
+            </div>
+        `;
+        
+        screenTile.appendChild(video);
+        screenTile.appendChild(overlay);
+        videoGrid.insertBefore(screenTile, videoGrid.firstChild);
     }
-    screenPreview.srcObject = screenStream;
+    
+    const screenVideo = document.querySelector('#local-screen-preview');
+    screenVideo.srcObject = screenStream;
 }
 
 async function createScreenShareConnection(remoteUserName) {
@@ -342,17 +971,16 @@ function stopScreenSharing() {
     screenPeerConnections = {};
 
     // Remove local screen preview
-    const screenWrapper = document.querySelector('#local-screen-wrapper');
-    if (screenWrapper) {
-        screenWrapper.remove();
+    const screenTile = document.querySelector('#video-tile-screen-local');
+    if (screenTile) {
+        screenTile.remove();
     }
 
     // Update UI
     isScreenSharing = false;
     const btn = document.querySelector('#share-screen');
-    btn.innerHTML = '<i class="bi bi-display"></i> Share Screen';
-    btn.classList.remove('btn-warning');
-    btn.classList.add('btn-success');
+    btn.innerHTML = '<i class="bi bi-display"></i><span class="control-label">Share</span>';
+    btn.classList.remove('active');
 
     // Notify server and others
     socket.emit('stopScreenShare', {
@@ -420,6 +1048,12 @@ function displayChatMessage({ senderName, message, timestamp, isOwn = false }) {
     
     chatMessages.appendChild(messageDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+    
+    // Increment unread messages if chat is not open and message is not from self
+    if (!isOwn && !isChatOpen) {
+        unreadMessages++;
+        updateChatBadge();
+    }
 }
 
 function escapeHtml(text) {
@@ -477,8 +1111,11 @@ const fetchUserMedia = () => {
                 video: true,
                 audio: true,
             });
-            localVideoEl.srcObject = stream;
-            localStream = stream;    
+            localStream = stream;
+            localVideoEl = document.querySelector('#local-video');
+            if (localVideoEl) {
+                localVideoEl.srcObject = stream;
+            }
             resolve();    
         } catch(err) {
             console.log(err);
@@ -492,23 +1129,12 @@ const createPeerConnection = (remoteUserName, offerObj) => {
         const peerConnection = new RTCPeerConnection(peerConfiguration);
         peerConnections[remoteUserName] = peerConnection;
 
-        // Create or get remote video element
-        let remoteVideoEl = document.querySelector(`#remote-video-${remoteUserName}`);
-        if (!remoteVideoEl) {
-            remoteVideoEl = document.createElement('video');
-            remoteVideoEl.id = `remote-video-${remoteUserName}`;
-            remoteVideoEl.className = 'video-player';
-            remoteVideoEl.autoplay = true;
-            remoteVideoEl.playsinline = true;
-            remoteVideoEl.controls = true;
-            
-            const wrapper = document.createElement('div');
-            wrapper.className = 'video-wrapper';
-            wrapper.innerHTML = `<div class="video-label">${offerObj?.offererDisplayName || remoteUserName}</div>`;
-            wrapper.appendChild(remoteVideoEl);
-            remoteVideosContainer.appendChild(wrapper);
-        }
-
+        // Create video tile if it doesn't exist
+        const displayName = offerObj?.offererDisplayName || remoteUserName;
+        const participantData = currentParticipants.find(p => p.userName === remoteUserName);
+        addVideoToGrid(remoteUserName, displayName, false, participantData);
+        
+        const remoteVideoEl = document.querySelector(`#remote-video-${remoteUserName}`);
         const remoteStream = new MediaStream();
         remoteVideoEl.srcObject = remoteStream;
 
@@ -556,11 +1182,275 @@ const addNewIceCandidate = (iceCandidate, remoteUserName) => {
 
 function updateParticipantsList(participants) {
     const participantsList = document.querySelector('#participants-list');
+    const participantCount = document.querySelector('#participant-count');
+    
+    // Store participants globally for admin controls
+    currentParticipants = participants;
+    
+    // Update video menus if they exist
+    updateVideoMenus(participants);
+    
+    participantCount.textContent = participants.length;
     participantsList.innerHTML = '';
+    
     participants.forEach(p => {
-        const participantEl = document.createElement('div');
-        participantEl.className = 'badge bg-info me-2 mb-2';
-        participantEl.textContent = p.displayName;
-        participantsList.appendChild(participantEl);
+        const participantDiv = document.createElement('div');
+        participantDiv.className = 'participant-card';
+        
+        let roleText = '';
+        let roleBadge = '';
+        if (p.isAdmin) {
+            roleText = 'Admin';
+            roleBadge = '<span class="role-badge admin-badge">Admin</span>';
+        } else if (p.isCoHost) {
+            roleText = 'Co-Host';
+            roleBadge = '<span class="role-badge cohost-badge">Co-Host</span>';
+        }
+        
+        // Show controls for admin/co-host (but not for other admins, and not for yourself)
+        const showControls = (isAdmin || isCoHost) && !p.isAdmin && p.userName !== userName;
+        
+        participantDiv.innerHTML = `
+            <div class="participant-card-info">
+                <div class="participant-avatar">
+                    <i class="bi bi-person-circle"></i>
+                </div>
+                <div class="participant-details">
+                    <span class="participant-name">
+                        ${p.displayName}
+                        ${p.handRaised ? '<i class="bi bi-hand-index-thumb-fill hand-raised-icon" title="Hand raised"></i>' : ''}
+                    </span>
+                    ${roleBadge}
+                </div>
+            </div>
+            ${showControls ? `
+                <div class="participant-menu">
+                    <button class="btn-menu" data-username="${p.userName}">
+                        <i class="bi bi-three-dots-vertical"></i>
+                    </button>
+                    <div class="menu-dropdown" id="menu-${p.userName}" style="display: none;">
+                        ${isAdmin && !p.isCoHost ? `<div class="menu-item make-cohost" data-username="${p.userName}">
+                            <i class="bi bi-star-fill"></i> Make Co-Host
+                        </div>` : ''}
+                        ${p.handRaised ? `<div class="menu-item lower-hand" data-username="${p.userName}">
+                            <i class="bi bi-hand-index-thumb"></i> Lower Hand
+                        </div>` : ''}
+                        <div class="menu-item toggle-audio" data-username="${p.userName}">
+                            <i class="bi bi-mic${p.permissions?.canUnmute ? '-mute' : ''}"></i> 
+                            ${p.permissions?.canUnmute ? 'Disable' : 'Enable'} Audio
+                        </div>
+                        <div class="menu-item toggle-video" data-username="${p.userName}">
+                            <i class="bi bi-camera-video${p.permissions?.canVideo ? '-off' : ''}"></i> 
+                            ${p.permissions?.canVideo ? 'Disable' : 'Enable'} Video
+                        </div>
+                        <div class="menu-item toggle-screenshare" data-username="${p.userName}">
+                            <i class="bi bi-display"></i> 
+                            ${p.permissions?.canScreenShare ? 'Disable' : 'Enable'} Screen Share
+                        </div>
+                        <div class="menu-divider"></div>
+                        <div class="menu-item remove-participant" data-username="${p.userName}">
+                            <i class="bi bi-x-circle"></i> Remove from Meeting
+                        </div>
+                    </div>
+                </div>
+            ` : ''}
+        `;
+        
+        participantsList.appendChild(participantDiv);
+    });
+    
+    // Add event listeners for menu buttons
+    document.querySelectorAll('.btn-menu').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const targetUser = e.currentTarget.dataset.username;
+            const menu = document.querySelector(`#menu-${targetUser}`);
+            
+            // Close all other menus
+            document.querySelectorAll('.menu-dropdown').forEach(m => {
+                if (m !== menu) m.style.display = 'none';
+            });
+            
+            // Toggle current menu
+            menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+        });
+    });
+    
+    // Close menus when clicking outside
+    document.addEventListener('click', () => {
+        document.querySelectorAll('.menu-dropdown').forEach(m => m.style.display = 'none');
+    });
+    
+    // Add event listeners for admin controls
+    document.querySelectorAll('.make-cohost').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const targetUser = e.currentTarget.dataset.username;
+            socket.emit('makeCoHost', { meetingId: currentMeetingId, userName: targetUser });
+            document.querySelectorAll('.menu-dropdown').forEach(m => m.style.display = 'none');
+        });
+    });
+    
+    document.querySelectorAll('.lower-hand').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const targetUser = e.currentTarget.dataset.username;
+            socket.emit('lowerHand', { meetingId: currentMeetingId, userName: targetUser });
+            document.querySelectorAll('.menu-dropdown').forEach(m => m.style.display = 'none');
+        });
+    });
+    
+    document.querySelectorAll('.toggle-audio, .toggle-video, .toggle-screenshare').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const targetUser = e.currentTarget.dataset.username;
+            const permission = e.currentTarget.classList.contains('toggle-audio') ? 'canUnmute' :
+                              e.currentTarget.classList.contains('toggle-video') ? 'canVideo' : 'canScreenShare';
+            
+            const participant = participants.find(p => p.userName === targetUser);
+            const newValue = !participant.permissions[permission];
+            
+            socket.emit('updateUserPermissions', {
+                meetingId: currentMeetingId,
+                userName: targetUser,
+                permissions: { [permission]: newValue }
+            });
+            document.querySelectorAll('.menu-dropdown').forEach(m => m.style.display = 'none');
+        });
+    });
+    
+    document.querySelectorAll('.remove-participant').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const targetUser = e.currentTarget.dataset.username;
+            const participant = participants.find(p => p.userName === targetUser);
+            
+            if (confirm(`Remove ${participant.displayName} from the meeting?`)) {
+                socket.emit('removeParticipant', { meetingId: currentMeetingId, userName: targetUser });
+                document.querySelectorAll('.menu-dropdown').forEach(m => m.style.display = 'none');
+            }
+        });
     });
 }
+
+function updateWaitingRoomList(waitingRoom) {
+    const waitingRoomList = document.querySelector('#waiting-room-list-sidebar');
+    const waitingCount = document.querySelector('#waiting-count');
+    const waitingRoomBadge = document.querySelector('#waiting-room-badge');
+    
+    waitingCount.textContent = waitingRoom.length;
+    
+    // Update bottom bar badge
+    if (waitingRoom.length > 0) {
+        const displayCount = waitingRoom.length > 9 ? '9+' : waitingRoom.length;
+        waitingRoomBadge.textContent = displayCount;
+        waitingRoomBadge.style.display = 'flex';
+    } else {
+        waitingRoomBadge.style.display = 'none';
+    }
+    
+    // Update waiting room tab badge color
+    const waitingTab = document.querySelector('#waiting-room-tab');
+    if (waitingRoom.length > 0) {
+        waitingTab.classList.add('has-waiting');
+        // Auto-open sidebar and switch to waiting room tab if closed
+        const sidebar = document.querySelector('#sidebar-panel');
+        if (sidebar.classList.contains('sidebar-hidden')) {
+            sidebar.classList.remove('sidebar-hidden');
+            // Switch to waiting room tab
+            const waitingTabButton = document.querySelector('#waiting-room-tab');
+            const waitingTabContent = document.querySelector('#waiting-room-content');
+            document.querySelectorAll('.nav-link').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-pane').forEach(pane => {
+                pane.classList.remove('show', 'active');
+            });
+            waitingTabButton.classList.add('active');
+            waitingTabContent.classList.add('show', 'active');
+        }
+    } else {
+        waitingTab.classList.remove('has-waiting');
+    }
+    
+    waitingRoomList.innerHTML = '';
+    
+    if (waitingRoom.length === 0) {
+        waitingRoomList.innerHTML = `
+            <div class="empty-state">
+                <i class="bi bi-people" style="font-size: 48px; color: #ccc;"></i>
+                <p class="text-muted mt-3">No one in the waiting room</p>
+            </div>
+        `;
+        return;
+    }
+    
+    waitingRoom.forEach(user => {
+        const userDiv = document.createElement('div');
+        userDiv.className = 'waiting-user-card';
+        userDiv.innerHTML = `
+            <div class="waiting-user-info">
+                <div class="waiting-user-avatar">
+                    <i class="bi bi-person-circle"></i>
+                </div>
+                <div class="waiting-user-details">
+                    <span class="waiting-user-name">${user.displayName}</span>
+                    <span class="waiting-user-status">Waiting to join...</span>
+                </div>
+            </div>
+            <div class="waiting-user-actions">
+                <button class="btn btn-sm btn-success admit-user" data-username="${user.userName}" title="Admit">
+                    <i class="bi bi-check-circle"></i> Admit
+                </button>
+                <button class="btn btn-sm btn-danger deny-user" data-username="${user.userName}" title="Deny">
+                    <i class="bi bi-x-circle"></i> Deny
+                </button>
+            </div>
+        `;
+        waitingRoomList.appendChild(userDiv);
+    });
+    
+    // Add event listeners
+    document.querySelectorAll('.admit-user').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const targetUser = e.currentTarget.dataset.username;
+            socket.emit('admitFromWaitingRoom', { meetingId: currentMeetingId, userName: targetUser });
+        });
+    });
+    
+    document.querySelectorAll('.deny-user').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const targetUser = e.currentTarget.dataset.username;
+            socket.emit('denyFromWaitingRoom', { meetingId: currentMeetingId, userName: targetUser });
+        });
+    });
+}
+
+// Initialize page - check if meeting ID is in URL
+window.addEventListener('DOMContentLoaded', () => {
+    if (urlMeetingId) {
+        // Pre-fill the meeting ID input
+        document.querySelector('#meeting-id-input').value = urlMeetingId;
+        
+        // Focus on display name input
+        document.querySelector('#display-name').focus();
+        
+        // Show a hint that user can join this meeting
+        const meetingLabel = document.querySelector('label[for="meeting-id-input"]');
+        if (meetingLabel) {
+            meetingLabel.innerHTML = `Meeting ID <span class="text-success">(from URL)</span>`;
+        }
+    }
+});
+
+// Handle browser back/forward buttons
+window.addEventListener('popstate', (event) => {
+    if (event.state && event.state.meetingId) {
+        // User navigated back to a meeting URL
+        console.log('Navigated to meeting:', event.state.meetingId);
+    } else {
+        // User navigated away from meeting
+        if (currentMeetingId) {
+            // They were in a meeting and navigated back
+            location.reload();
+        }
+    }
+});
