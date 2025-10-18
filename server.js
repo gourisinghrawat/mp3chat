@@ -21,20 +21,30 @@ app.get('/:meetingId([A-Z0-9]{8})', (req, res) => {
     res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
 });
 
-const key = fs.readFileSync('cert.key');
-const cert = fs.readFileSync('cert.crt');
+// Create server based on environment
+let expressServer;
+const http = require('http');
 
-const expressServer = https.createServer({ key, cert }, app);
+if (process.env.NODE_ENV === 'production') {
+    // Production: Use HTTP (Render handles HTTPS)
+    expressServer = http.createServer(app);
+    console.log('[SERVER] Running in production mode (HTTP - Render provides HTTPS)');
+} else {
+    // Development: Use HTTPS with local certificates
+    const key = fs.readFileSync('cert.key');
+    const cert = fs.readFileSync('cert.crt');
+    expressServer = https.createServer({ key, cert }, app);
+    console.log('[SERVER] Running in development mode (HTTPS with local certs)');
+}
 
 const io = socketio(expressServer, {
     cors: {
-        origin: [
+        origin: process.env.FRONTEND_URL || [
             "https://localhost:8181",
-            "https://172.22.240.1",
-            
-            "https://0.0.0.0",
+            "https://172.22.240.1:8181"
         ],
-        methods: ["GET", "POST"]
+        methods: ["GET", "POST"],
+        credentials: true
     }
 });
 const handleSocketEvents = require('./backend/socket/socketEvents');
