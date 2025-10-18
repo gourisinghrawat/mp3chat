@@ -26,36 +26,15 @@ const cert = fs.readFileSync('cert.crt');
 
 const expressServer = https.createServer({ key, cert }, app);
 
-// Configure CORS origins based on environment
-const getAllowedOrigins = () => {
-    const origins = [];
-    
-    // Production/Vercel domain
-    if (process.env.VERCEL_URL) {
-        origins.push(`https://${process.env.VERCEL_URL}`);
-    }
-    
-    // Custom domain if provided
-    if (process.env.APP_URL) {
-        origins.push(process.env.APP_URL);
-    }
-    
-    // Local development
-    if (process.env.NODE_ENV !== 'production') {
-        origins.push('https://localhost:8181');
-        origins.push('http://localhost:8181');
-        origins.push('https://localhost:3000');
-        origins.push('http://localhost:3000');
-    }
-    
-    return origins.length > 0 ? origins : '*';
-};
-
 const io = socketio(expressServer, {
     cors: {
-        origin: getAllowedOrigins(),
-        methods: ["GET", "POST"],
-        credentials: true
+        origin: [
+            "https://localhost:8181",
+            "https://172.22.240.1",
+            
+            "https://0.0.0.0",
+        ],
+        methods: ["GET", "POST"]
     }
 });
 const handleSocketEvents = require('./backend/socket/socketEvents');

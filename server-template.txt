@@ -41,7 +41,7 @@ handleSocketEvents(io);
 
 const PORT = process.env.PORT || 8181;
 expressServer.listen(PORT, () => {
-    console.log(`\n server running on https://localhost:${PORT}`);
-    console.log(` Frontend served from: ./frontend`);
-    console.log(` Socket.IO ready for connections\n`);
+    console.log(`\n🚀 Server running on https://localhost:${PORT}`);
+    console.log(`📁 Frontend served from: ./frontend`);
+    console.log(`🔌 Socket.IO ready for connections\n`);
 });

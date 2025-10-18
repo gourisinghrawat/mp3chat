@@ -3,7 +3,7 @@ const connectDB = require('./config/database');
 const Meeting = require('./models/Meeting');
 
 async function testDatabase() {
-    console.log(' Starting database test...\n');
+    console.log('🧪 Starting database test...\n');
     
     try {
         // Connect to database
@@ -11,7 +11,7 @@ async function testDatabase() {
         console.log('');
         
         // Create a test meeting
-        console.log(' Creating test meeting...');
+        console.log('📝 Creating test meeting...');
         const testMeeting = new Meeting({
             meetingId: 'TEST' + Math.random().toString(36).substring(2, 6).toUpperCase(),
             title: 'Test Meeting - Database Verification',
@@ -27,44 +27,44 @@ async function testDatabase() {
         });
         
         await testMeeting.save();
-        console.log(' Test meeting created successfully!');
+        console.log('✅ Test meeting created successfully!');
         console.log('   Meeting ID:', testMeeting.meetingId);
         console.log('   Title:', testMeeting.title);
         console.log('   Scheduled:', testMeeting.scheduledTime.toLocaleString());
         console.log('');
         
         // Fetch the meeting back
-        console.log(' Fetching the meeting from database...');
+        console.log('🔍 Fetching the meeting from database...');
         const found = await Meeting.findOne({ meetingId: testMeeting.meetingId });
         if (found) {
-            console.log(' Meeting found successfully!');
+            console.log('✅ Meeting found successfully!');
             console.log('   Host:', found.hostName);
             console.log('   Participants:', found.participants.length);
             console.log('');
         }
         
         // Update the meeting
-        console.log(' Updating meeting status...');
+        console.log('📝 Updating meeting status...');
         found.status = 'ongoing';
         found.actualStartTime = new Date();
         await found.save();
-        console.log('Meeting updated successfully!');
-        console.log(' Status:', found.status);
+        console.log('✅ Meeting updated successfully!');
+        console.log('   Status:', found.status);
         console.log('');
         
         // Get all scheduled meetings
-        console.log('Fetching all scheduled meetings...');
+        console.log('📋 Fetching all scheduled meetings...');
         const allMeetings = await Meeting.find({ status: { $in: ['scheduled', 'ongoing'] } });
-        console.log('Found', allMeetings.length, 'scheduled/ongoing meeting(s)');
+        console.log('✅ Found', allMeetings.length, 'scheduled/ongoing meeting(s)');
         console.log('');
         
         // Delete the test meeting
-        console.log(' Cleaning up test data...');
+        console.log('🗑️ Cleaning up test data...');
         await Meeting.deleteOne({ meetingId: testMeeting.meetingId });
-        console.log(' Test meeting deleted');
+        console.log('✅ Test meeting deleted');
         console.log('');
         
-        console.log(' All tests passed! Your MongoDB setup is working correctly!');
+        console.log('🎉 All tests passed! Your MongoDB setup is working correctly!');
         console.log('');
         console.log('Next steps:');
         console.log('1. Start your server: node server.js');
