@@ -1,7 +1,5 @@
 require('dotenv').config();
 
-const fs = require('fs');
-const https = require('https');
 const express = require('express');
 const path = require('path');
 const socketio = require('socket.io');
@@ -23,14 +21,16 @@ app.get('/:meetingId([A-Z0-9]{8})', (req, res) => {
 
 // Create server based on environment
 let expressServer;
-const http = require('http');
 
 if (process.env.NODE_ENV === 'production') {
     // Production: Use HTTP (Render handles HTTPS)
+    const http = require('http');
     expressServer = http.createServer(app);
     console.log('[SERVER] Running in production mode (HTTP - Render provides HTTPS)');
 } else {
     // Development: Use HTTPS with local certificates
+    const fs = require('fs');
+    const https = require('https');
     const key = fs.readFileSync('cert.key');
     const cert = fs.readFileSync('cert.crt');
     expressServer = https.createServer({ key, cert }, app);
