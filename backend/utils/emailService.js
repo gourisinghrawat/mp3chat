@@ -54,7 +54,7 @@ const sendScheduleConfirmation = async (meeting, meetingLink) => {
             address: process.env.EMAIL_USER
         },
         to: meeting.hostEmail,
-        subject: `âœ… Meeting Scheduled: ${meeting.title}`,
+        subject: `Meeting Scheduled: ${meeting.title}`,
         html: `
             <!DOCTYPE html>
             <html>
@@ -77,7 +77,7 @@ const sendScheduleConfirmation = async (meeting, meetingLink) => {
             <body>
                 <div class="container">
                     <div class="header">
-                        <div class="success-icon">âœ…</div>
+                        <div class="success-icon"></div>
                         <h1>Meeting Scheduled Successfully!</h1>
                     </div>
                     <div class="content">
@@ -86,28 +86,28 @@ const sendScheduleConfirmation = async (meeting, meetingLink) => {
                         
                         <div class="meeting-details">
                             <div class="detail-row">
-                                <span class="detail-label">ðŸ“‹ Title:</span> ${meeting.title}
+                                <span class="detail-label">‹ Title:</span> ${meeting.title}
                             </div>
                             ${meeting.description ? `
                                 <div class="detail-row">
-                                    <span class="detail-label">ðŸ“ Description:</span> ${meeting.description}
+                                    <span class="detail-label">Description:</span> ${meeting.description}
                                 </div>
                             ` : ''}
                             <div class="detail-row">
-                                <span class="detail-label">ðŸ“… Date:</span> ${scheduledDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                                <span class="detail-label">… Date:</span> ${scheduledDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                             </div>
                             <div class="detail-row">
-                                <span class="detail-label">ðŸ• Time:</span> ${scheduledDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                                <span class="detail-label"> Time:</span> ${scheduledDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                             </div>
                             <div class="detail-row">
-                                <span class="detail-label">â±ï¸ Duration:</span> ${meeting.duration} minutes
+                                <span class="detail-label">Duration:</span> ${meeting.duration} minutes
                             </div>
                             <div class="detail-row">
-                                <span class="detail-label">ðŸŽ« Meeting ID:</span> <code>${meeting.meetingId}</code>
+                                <span class="detail-label"> Meeting ID:</span> <code>${meeting.meetingId}</code>
                             </div>
                             ${meeting.participants?.length > 0 ? `
                                 <div class="detail-row">
-                                    <span class="detail-label">ðŸ‘¥ Participants:</span> ${meeting.participants.length} invited
+                                    <span class="detail-label"> Participants:</span> ${meeting.participants.length} invited
                                 </div>
                             ` : ''}
                         </div>
@@ -119,8 +119,8 @@ const sendScheduleConfirmation = async (meeting, meetingLink) => {
                         
                         <p><strong>What's next?</strong></p>
                         <ul>
-                            <li>ðŸ“§ Invitations have been sent to all participants</li>
-                            <li>ðŸ“… A calendar invite is attached to this email</li>
+                            <li>§ Invitations have been sent to all participants</li>
+                            <li>… A calendar invite is attached to this email</li>
                             <li>â° You'll receive a reminder 15 minutes before the meeting</li>
                             <li>ðŸš€ Click "Start Meeting" when ready to begin</li>
                         </ul>
@@ -147,7 +147,7 @@ const sendScheduleConfirmation = async (meeting, meetingLink) => {
     
     try {
         const info = await transporter.sendMail(mailOptions);
-        console.log(`ðŸ“§ Schedule confirmation email sent to ${meeting.hostEmail}`);
+        console.log(`§ Schedule confirmation email sent to ${meeting.hostEmail}`);
         return { success: true, messageId: info.messageId };
     } catch (error) {
         console.error('âŒ Error sending schedule confirmation email:', error);
@@ -175,7 +175,7 @@ const sendParticipantInvitations = async (meeting, meetingLink) => {
                 address: process.env.EMAIL_USER
             },
             to: participant.email,
-            subject: `ðŸ“… Meeting Invitation: ${meeting.title}`,
+            subject: `… Meeting Invitation: ${meeting.title}`,
             html: `
                 <!DOCTYPE html>
                 <html>
@@ -197,7 +197,7 @@ const sendParticipantInvitations = async (meeting, meetingLink) => {
                 <body>
                     <div class="container">
                         <div class="header">
-                            <h1>ðŸ“… You're Invited to a Meeting!</h1>
+                            <h1>… You're Invited to a Meeting!</h1>
                         </div>
                         <div class="content">
                             <p>Hi${participant.name ? ` <strong>${participant.name}</strong>` : ''},</p>
@@ -205,21 +205,21 @@ const sendParticipantInvitations = async (meeting, meetingLink) => {
                             
                             <div class="meeting-details">
                                 <div class="detail-row">
-                                    <span class="detail-label">ðŸ“‹ Title:</span> ${meeting.title}
+                                    <span class="detail-label">‹ Title:</span> ${meeting.title}
                                 </div>
                                 ${meeting.description ? `
                                     <div class="detail-row">
-                                        <span class="detail-label">ðŸ“ Description:</span> ${meeting.description}
+                                        <span class="detail-label"> Description:</span> ${meeting.description}
                                     </div>
                                 ` : ''}
                                 <div class="detail-row">
-                                    <span class="detail-label">ðŸ“… Date:</span> ${scheduledDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                                    <span class="detail-label">… Date:</span> ${scheduledDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
                                 </div>
                                 <div class="detail-row">
-                                    <span class="detail-label">ðŸ• Time:</span> ${scheduledDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                                    <span class="detail-label"> Time:</span> ${scheduledDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
                                 </div>
                                 <div class="detail-row">
-                                    <span class="detail-label">â±ï¸ Duration:</span> ${meeting.duration} minutes
+                                    <span class="detail-label">Duration:</span> ${meeting.duration} minutes
                                 </div>
                                 <div class="detail-row">
                                     <span class="detail-label">ðŸ‘¤ Host:</span> ${meeting.hostName}
@@ -235,7 +235,7 @@ const sendParticipantInvitations = async (meeting, meetingLink) => {
                                 <a href="${meetingLink}" class="button">Join Meeting</a>
                             </div>
                             
-                            <p><strong>ðŸ“… Add to Calendar:</strong> A calendar invite is attached to this email. Click to add this meeting to your Google Calendar, Outlook, or other calendar app.</p>
+                            <p><strong>… Add to Calendar:</strong> A calendar invite is attached to this email. Click to add this meeting to your Google Calendar, Outlook, or other calendar app.</p>
                             
                             <p><strong>â° Reminder:</strong> You'll receive a reminder 15 minutes before the meeting starts.</p>
                             
@@ -257,7 +257,7 @@ const sendParticipantInvitations = async (meeting, meetingLink) => {
         
         try {
             const info = await transporter.sendMail(mailOptions);
-            console.log(`ðŸ“§ Invitation sent to ${participant.email}`);
+            console.log(`§ Invitation sent to ${participant.email}`);
             results.push({ email: participant.email, success: true, messageId: info.messageId });
         } catch (error) {
             console.error(`âŒ Error sending invitation to ${participant.email}:`, error);
@@ -266,7 +266,7 @@ const sendParticipantInvitations = async (meeting, meetingLink) => {
     }
     
     const successCount = results.filter(r => r.success).length;
-    console.log(`ðŸ“Š Invitations sent: ${successCount}/${meeting.participants.length}`);
+    console.log(`Š Invitations sent: ${successCount}/${meeting.participants.length}`);
     
     return { success: true, sent: successCount, total: meeting.participants.length, results };
 };
@@ -305,18 +305,18 @@ const sendMeetingReminder = async (meeting, meetingLink) => {
                     </div>
                     <div class="content">
                         <div class="alert-box">
-                            <h2 style="margin-top: 0;">ðŸ“¢ Your meeting starts in 15 minutes!</h2>
+                            <h2 style="margin-top: 0;">¢ Your meeting starts in 15 minutes!</h2>
                             <p><strong>${meeting.title}</strong></p>
-                            <p>ðŸ• ${scheduledDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</p>
+                            <p> ${scheduledDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</p>
                         </div>
                         
                         <div class="meeting-link">
-                            <strong>ðŸ”— Meeting Link:</strong><br>
+                            <strong> Meeting Link:</strong><br>
                             <a href="${meetingLink}">${meetingLink}</a>
                         </div>
                         
                         <div style="text-align: center; margin-top: 30px;">
-                            <a href="${meetingLink}" class="button">ðŸš€ Start Meeting Now</a>
+                            <a href="${meetingLink}" class="button"> Start Meeting Now</a>
                         </div>
                         
                         <p><strong>As the host, you can:</strong></p>
@@ -404,8 +404,8 @@ const sendCancellationNotification = async (meeting, meetingLink) => {
                         
                         <div class="meeting-details">
                             <p><strong>Meeting Details:</strong></p>
-                            <p>ðŸ“… Date: ${scheduledDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
-                            <p>ðŸ• Time: ${scheduledDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</p>
+                            <p>… Date: ${scheduledDate.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                            <p> Time: ${scheduledDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</p>
                             <p>ðŸ‘¤ Host: ${meeting.hostName}</p>
                         </div>
                         
@@ -425,7 +425,7 @@ const sendCancellationNotification = async (meeting, meetingLink) => {
     
     try {
         const info = await transporter.sendMail(mailOptions);
-        console.log(`ðŸ“§ Cancellation email sent to ${recipients.length} recipient(s)`);
+        console.log(`§ Cancellation email sent to ${recipients.length} recipient(s)`);
         return { success: true, messageId: info.messageId, recipients: recipients.length };
     } catch (error) {
         console.error('âŒ Error sending cancellation email:', error);
